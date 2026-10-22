@@ -37,21 +37,27 @@ def server():
 
 
 @pytest.fixture(scope="module")
-def page(server):
+def browser():
     from playwright.sync_api import sync_playwright
 
     SHOTS.mkdir(exist_ok=True)
     with sync_playwright() as p:
-        browser = p.chromium.launch()
-        context = browser.new_context(accept_downloads=True, viewport={"width": 1280, "height": 900})
-        pg = context.new_page()
-        errors = []
-        pg.on("pageerror", lambda e: errors.append(str(e)))
-        pg.errors = errors
-        pg.goto(server)
-        pg.wait_for_selector("body[data-ready=true]", timeout=LOAD_TIMEOUT)
-        yield pg
-        browser.close()
+        b = p.chromium.launch()
+        yield b
+        b.close()
+
+
+@pytest.fixture(scope="module")
+def page(server, browser):
+    context = browser.new_context(accept_downloads=True, viewport={"width": 1280, "height": 900})
+    pg = context.new_page()
+    errors = []
+    pg.on("pageerror", lambda e: errors.append(str(e)))
+    pg.errors = errors
+    pg.goto(server)
+    pg.wait_for_selector("body[data-ready=true]", timeout=LOAD_TIMEOUT)
+    yield pg
+    context.close()
 
 
 def _download(page, button, tmp_path):
@@ -127,14 +133,10 @@ def test_bad_file_shows_friendly_error(page, tmp_path):
     assert page.errors == []
 
 
-def test_phone_layout(server):
-    from playwright.sync_api import sync_playwright
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        pg = browser.new_page(viewport={"width": 390, "height": 844})
-        pg.goto(server)
-        width = pg.evaluate("document.documentElement.scrollWidth")
-        pg.screenshot(path=SHOTS / "4_phone.png")
-        browser.close()
+def test_phone_layout(server, browser):
+    pg = browser.new_page(viewport={"width": 390, "height": 844})
+    pg.goto(server)
+    width = pg.evaluate("document.documentElement.scrollWidth")
+    pg.screenshot(path=SHOTS / "4_phone.png")
+    pg.close()
     assert width <= 390
