@@ -4,14 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "data-science-toolkit"
-version = "0.1.0"
-description = "Quick exploratory data analysis helpers: distributions, summary tables and line fits"
+version = "0.2.0"
+description = "Data cleaning and exploratory analysis helpers: duplicates, missing values, outliers, encoding, scaling, distributions and line fits"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "pandas>=2.0",
     "matplotlib>=3.10",
     "scipy>=1.10",
+    "scikit-learn>=1.3",
 ]
 
 [project.optional-dependencies]
@@ -19,7 +20,7 @@ notebooks = ["jupyter", "scikit-learn", "numpy"]
 dev = ["pytest", "nbconvert", "nbclient", "ipykernel", "scikit-learn"]
 
 [tool.setuptools]
-py-modules = ["toolkit"]
+py-modules = ["toolkit", "preprocessing"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
