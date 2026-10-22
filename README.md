@@ -132,6 +132,13 @@ mypy      # type check
 
 The tests check every function, including that inputs are never modified, that every plot draws when values are missing, that report HTML escapes column names, and that the code `profile()` suggests actually runs. GitHub Actions runs the type check, the tests and every notebook on Python 3.10 and 3.13 for each push and pull request. See [CHANGELOG.md](CHANGELOG.md) for version history.
 
+## Used in
+
+- **[Hip & Knee Replacement Outcomes Dashboard](https://github.com/Dito-84/hip-knee-replacement-outcomes-dashboard)**: `scripts/check_data.py` profiles a real discharge export before the dashboard is built, using `missing_ok` because a blank complication or readmission means "didn't happen"
+- **[Titanic Survival Prediction](https://github.com/Dito-84/RDR_Titanic_Project)**: a data-quality check before modeling. Its suggestions inform the choices, but missing ages are still filled inside each cross-validation fold so no test data leaks into training
+
+Both use dstoolkit as an optional extra, pinned to a tested commit, so changes here can't break them.
+
 ## Data
 
 - `data/StudentData.csv`: 17 students' study hours and grades (two rows deliberately missing)
