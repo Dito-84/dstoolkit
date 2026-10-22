@@ -1,26 +1,38 @@
-"""Data cleaning and preprocessing helpers.
+"""Data cleaning: duplicates, missing values, outliers, encoding and scaling.
 
 Each function takes a DataFrame and returns a new one; the input is never
 modified. Steps can be used on their own or chained with `clean()`:
 
-    import preprocessing as pp
+    import dstoolkit as dst
 
-    df = pp.remove_duplicates(df)
-    df = pp.fill_missing(df, numeric="median")
-    df = pp.handle_outliers(df, columns=["fare"], method="iqr", action="cap")
-    df = pp.encode_categorical(df, {"sex": "label", "embarked": "onehot"})
-    df = pp.normalize(df, {"age": "minmax", "fare": "zscore"})
+    df = dst.remove_duplicates(df)
+    df = dst.fill_missing(df, numeric="median")
+    df = dst.handle_outliers(df, columns=["fare"], method="iqr", action="cap")
+    df = dst.encode_categorical(df, {"sex": "label", "embarked": "onehot"})
+    df = dst.normalize(df, {"age": "minmax", "fare": "zscore"})
 
     # or all at once
-    df = pp.clean(df, missing={"numeric": "median"}, outliers={"columns": ["fare"], "action": "cap"})
+    df = dst.clean(df, missing={"numeric": "median"}, outliers={"columns": ["fare"], "action": "cap"})
 
 Pass `verbose=False` to any function to silence its summary message.
 """
 
+from __future__ import annotations
+
 import warnings
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Any, Literal, Union
 
 import numpy as np
 import pandas as pd
+
+NumericFill = Literal["mean", "median", "knn", "zero"]
+CategoricalFill = Literal["most_frequent", "missing"]
+OutlierMethod = Literal["iqr", "zscore"]
+OutlierAction = Literal["remove", "cap"]
+Encoding = Literal["onehot", "label"]
+Scaling = Literal["minmax", "zscore"]
+StepOptions = Union[bool, Mapping[str, Any], None]
 
 __all__ = [
     "remove_duplicates",
@@ -38,18 +50,22 @@ __all__ = [
 DOB_NAME_HINTS = ("dob", "date_of_birth", "dateofbirth", "birth_date", "birthdate", "birthday")
 
 
-def _say(verbose, message):
+def _say(verbose: bool, message: str) -> None:
     if verbose:
         print(message)
 
 
-def _check_columns(df, columns):
+def _check_columns(df: pd.DataFrame, columns: Iterable[str]) -> None:
+    columns = list(columns)
     missing = [c for c in columns if c not in df.columns]
     if missing:
         raise KeyError(f"Columns not found: {missing}")
+    repeated = [c for c in columns if (df.columns == c).sum() > 1]
+    if repeated:
+        raise ValueError(f"Column name(s) {repeated} appear more than once; rename duplicates first")
 
 
-def _numeric_columns(df, columns):
+def _numeric_columns(df: pd.DataFrame, columns: Iterable[str] | None) -> list[str]:
     """Requested columns (default: every numeric column), checked to be numeric."""
     if columns is None:
         return list(df.select_dtypes(include="number").columns)
@@ -61,9 +77,18 @@ def _numeric_columns(df, columns):
     return columns
 
 
+def _position(df: pd.DataFrame, column: str) -> int:
+    """Index of a column; new columns are inserted right after it."""
+    loc = df.columns.get_loc(column)
+    if not isinstance(loc, int):
+        raise ValueError(f"Column name {column!r} appears more than once; rename duplicates first")
+    return loc
+
+
 # ---------- duplicates ----------
 
-def remove_duplicates(df, subset=None, keep="first", verbose=True):
+def remove_duplicates(df: pd.DataFrame, subset: Sequence[str] | None = None,
+                      keep: Literal["first", "last"] = "first", verbose: bool = True) -> pd.DataFrame:
     """Drop duplicate rows.
 
     subset: columns that define a duplicate (default: all columns)
@@ -83,8 +108,10 @@ NUMERIC_FILL = ("mean", "median", "knn", "zero", None)
 CATEGORICAL_FILL = ("most_frequent", "missing", None)
 
 
-def fill_missing(df, numeric="mean", categorical="most_frequent", columns=None, n_neighbors=5,
-                 drop_empty_rows=True, verbose=True):
+def fill_missing(df: pd.DataFrame, numeric: NumericFill | None = "mean",
+                 categorical: CategoricalFill | None = "most_frequent",
+                 columns: Sequence[str] | None = None, n_neighbors: int = 5,
+                 drop_empty_rows: bool = True, verbose: bool = True) -> pd.DataFrame:
     """Fill missing values, with separate methods for numeric and text columns.
 
     columns: only fill these columns (default: all). Useful for leaving mostly
@@ -152,7 +179,7 @@ def fill_missing(df, numeric="mean", categorical="most_frequent", columns=None, 
 
 # ---------- outliers ----------
 
-def _bounds(series, method, threshold):
+def _bounds(series: pd.Series, method: OutlierMethod, threshold: float | None) -> tuple[float, float]:
     values = series.dropna()
     if method == "iqr":
         threshold = 1.5 if threshold is None else threshold
@@ -166,7 +193,8 @@ def _bounds(series, method, threshold):
     raise ValueError(f"method must be 'iqr' or 'zscore', got {method!r}")
 
 
-def find_outliers(df, columns=None, method="iqr", threshold=None):
+def find_outliers(df: pd.DataFrame, columns: Sequence[str] | None = None, method: OutlierMethod = "iqr",
+                  threshold: float | None = None) -> pd.DataFrame:
     """True/False table marking outlying values (missing values are never outliers).
 
     method: 'iqr' (outside threshold x interquartile range, default 1.5) or
@@ -180,7 +208,9 @@ def find_outliers(df, columns=None, method="iqr", threshold=None):
     return flags
 
 
-def handle_outliers(df, columns=None, method="iqr", threshold=None, action="remove", verbose=True):
+def handle_outliers(df: pd.DataFrame, columns: Sequence[str] | None = None, method: OutlierMethod = "iqr",
+                    threshold: float | None = None, action: OutlierAction = "remove",
+                    verbose: bool = True) -> pd.DataFrame:
     """Remove or cap outliers in numeric columns.
 
     action: 'remove' drops any row with an outlier in the chosen columns;
@@ -208,7 +238,8 @@ def handle_outliers(df, columns=None, method="iqr", threshold=None, action="remo
     return result
 
 
-def winsorize(df, columns=None, lower=0.05, upper=0.95, verbose=True):
+def winsorize(df: pd.DataFrame, columns: Sequence[str] | None = None, lower: float = 0.05,
+              upper: float = 0.95, verbose: bool = True) -> pd.DataFrame:
     """Clip each column to its lower and upper percentiles (default 5th and 95th)."""
     if not 0 <= lower < upper <= 1:
         raise ValueError("Need 0 <= lower < upper <= 1")
@@ -221,7 +252,8 @@ def winsorize(df, columns=None, lower=0.05, upper=0.95, verbose=True):
     return result
 
 
-def log_transform(df, columns, suffix="", verbose=True):
+def log_transform(df: pd.DataFrame, columns: Sequence[str], suffix: str = "",
+                  verbose: bool = True) -> pd.DataFrame:
     """Apply log(1 + x) to shrink long right tails, such as income or price.
 
     Values must be greater than -1. With a suffix (e.g. '_log') the result goes
@@ -239,7 +271,9 @@ def log_transform(df, columns, suffix="", verbose=True):
 
 # ---------- encoding ----------
 
-def encode_categorical(df, columns, onehot_limit=10, drop_original=False, verbose=True):
+def encode_categorical(df: pd.DataFrame, columns: Mapping[str, Encoding] | Sequence[str],
+                       onehot_limit: int = 10, drop_original: bool = False,
+                       verbose: bool = True) -> pd.DataFrame:
     """Turn text categories into numbers.
 
     columns: {column: 'onehot' or 'label'}, or a list of columns to one-hot encode
@@ -249,7 +283,7 @@ def encode_categorical(df, columns, onehot_limit=10, drop_original=False, verbos
     onehot_limit: warn when one-hot encoding would add more columns than this
     drop_original: remove the original text columns after encoding
     """
-    if isinstance(columns, (list, tuple)):
+    if not isinstance(columns, Mapping):
         columns = {c: "onehot" for c in columns}
     _check_columns(df, columns)
     bad = {c: m for c, m in columns.items() if m not in ("onehot", "label")}
@@ -263,13 +297,13 @@ def encode_categorical(df, columns, onehot_limit=10, drop_original=False, verbos
             if dummies.shape[1] > onehot_limit:
                 warnings.warn(f"One-hot encoding {col!r} adds {dummies.shape[1]} columns; "
                               f"consider 'label' encoding instead.", stacklevel=2)
-            at = result.columns.get_loc(col) + 1
+            at = _position(result, col) + 1
             for offset, name in enumerate(dummies.columns):
                 result.insert(at + offset, name, dummies[name])
         else:
             categories = sorted(df[col].dropna().unique(), key=str)
             codes = {cat: i for i, cat in enumerate(categories)}
-            result.insert(result.columns.get_loc(col) + 1, f"{col}_label", df[col].map(codes).astype("Int64"))
+            result.insert(_position(result, col) + 1, f"{col}_label", df[col].map(codes).astype("Int64"))
             _say(verbose, f"{col} labels: " + ", ".join(f"{k}={v}" for k, v in codes.items()))
     if drop_original:
         result = result.drop(columns=list(columns))
@@ -279,7 +313,8 @@ def encode_categorical(df, columns, onehot_limit=10, drop_original=False, verbos
 
 # ---------- normalization ----------
 
-def normalize(df, columns, verbose=True):
+def normalize(df: pd.DataFrame, columns: Mapping[str, Scaling] | Sequence[str],
+              verbose: bool = True) -> pd.DataFrame:
     """Rescale numeric columns.
 
     columns: {column: 'minmax' or 'zscore'}, or a list of columns to min-max scale
@@ -287,7 +322,7 @@ def normalize(df, columns, verbose=True):
       - 'zscore' centres on 0 with a standard deviation of 1
     Missing values stay missing. A column with only one distinct value becomes 0.
     """
-    if isinstance(columns, (list, tuple)):
+    if not isinstance(columns, Mapping):
         columns = {c: "minmax" for c in columns}
     _numeric_columns(df, list(columns))
     bad = {c: m for c, m in columns.items() if m not in ("minmax", "zscore")}
@@ -309,7 +344,9 @@ def normalize(df, columns, verbose=True):
 
 # ---------- derived columns ----------
 
-def add_age_column(df, dob_column=None, as_of=None, name="age", verbose=True):
+def add_age_column(df: pd.DataFrame, dob_column: str | None = None,
+                   as_of: str | pd.Timestamp | None = None, name: str = "age",
+                   verbose: bool = True) -> pd.DataFrame:
     """Add age in completed years, calculated from a date-of-birth column.
 
     dob_column: column holding birth dates; if omitted, the first column whose
@@ -340,14 +377,16 @@ def add_age_column(df, dob_column=None, as_of=None, name="age", verbose=True):
         result[name] = age
         _say(verbose, f"Updated {name!r} from {dob_column!r}.")
     else:
-        result.insert(result.columns.get_loc(dob_column) + 1, name, age)
+        result.insert(_position(result, dob_column) + 1, name, age)
         _say(verbose, f"Added {name!r} from {dob_column!r}.")
     return result
 
 
 # ---------- pipeline ----------
 
-def clean(df, duplicates=True, missing=True, outliers=None, encode=None, scale=None, verbose=True):
+def clean(df: pd.DataFrame, duplicates: StepOptions = True, missing: StepOptions = True,
+          outliers: StepOptions = None, encode: StepOptions = None, scale: StepOptions = None,
+          verbose: bool = True) -> pd.DataFrame:
     """Run the cleaning steps in a sensible order and return a new DataFrame.
 
     Order: duplicates -> missing values -> outliers -> encoding -> normalization.
@@ -360,8 +399,11 @@ def clean(df, duplicates=True, missing=True, outliers=None, encode=None, scale=N
               encode={"columns": {"sex": "label"}},
               scale={"columns": {"age": "minmax"}})
     """
-    def opts(value):
-        return {} if value is True else dict(value)
+    def opts(value: StepOptions) -> dict[str, Any]:
+        if value is True:
+            return {}
+        assert isinstance(value, Mapping)
+        return dict(value)
 
     for step, value in (("encode", encode), ("scale", scale)):
         if value is True or (value and "columns" not in value):

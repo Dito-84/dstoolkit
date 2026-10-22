@@ -1,8 +1,8 @@
-# Data_Science_Toolkit
+# dstoolkit
 
 [![CI](https://github.com/Dito-84/Data_Science_Toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/Dito-84/Data_Science_Toolkit/actions/workflows/ci.yml)
 
-Two small Python modules for the first stages of a data project: **`preprocessing.py`** cleans a dataset (duplicates, missing values, outliers, encoding, scaling) and **`toolkit.py`** explores it (distributions, summary tables, line fits). Both work on any pandas DataFrame and handle missing values on their own.
+**Data Science Toolkit**: a small, typed Python package for the first stages of a data project. It **cleans** a pandas DataFrame (duplicates, missing values, outliers, encoding, scaling) and **explores** it (summary statistics, distribution plots, line fits). Every function returns a new DataFrame, so your raw data is never changed, and every function copes with missing values on its own.
 
 ## Install
 
@@ -10,36 +10,34 @@ Two small Python modules for the first stages of a data project: **`preprocessin
 pip install git+https://github.com/Dito-84/Data_Science_Toolkit
 ```
 
-Or clone the repo and run `pip install -e ".[notebooks]"` to work with the notebooks too.
+Requires Python 3.10+.
 
 ## Quick start
 
 ```python
 import pandas as pd
-import toolkit
+import dstoolkit as dst
 
-df = pd.read_csv("StudentData.csv")
-toolkit.show_eda(df.Grade)
-toolkit.show_distribution_profile(df.Grade, title="Grade Distribution")
-m, b, predict = toolkit.fit_line(df.StudyHours, df.Grade)
-predict(9)  # ≈ 66.6
-```
+raw = pd.read_csv("data/titanic3.csv", na_values="?")
 
-## Cleaning: `preprocessing.py`
-
-Each function returns a new DataFrame (the input is never changed) and prints a one-line summary of what it did; pass `verbose=False` to silence it.
-
-```python
-import preprocessing as pp
-
-df = pp.clean(
+df = dst.clean(
     raw,
     missing={"numeric": "median", "columns": ["age", "fare", "embarked"]},
     outliers={"columns": ["fare"], "action": "cap"},
     encode={"columns": {"sex": "label", "embarked": "onehot"}},
-    scale={"columns": {"age": "minmax", "fare": "zscore"}},
 )
+# No duplicates found.
+# Filled missing values: age (263), fare (1), embarked (2)
+# Capped outliers: fare (171)
+# sex labels: female=0, male=1
+# Encoded sex (label), embarked (onehot).
+
+dst.show_distribution_profile(df["age"], title="Passenger Age")
 ```
+
+Each cleaning step prints a one-line summary of what it changed; pass `verbose=False` to silence it.
+
+## Cleaning: `dstoolkit.cleaning`
 
 | Function | What it does |
 |---|---|
@@ -52,14 +50,12 @@ df = pp.clean(
 | `encode_categorical(df, columns)` | One-hot or label encoding per column; label codes keep missing values missing |
 | `normalize(df, columns)` | Min-max (0–1) or z-score scaling per column |
 | `add_age_column(df, dob_column, as_of)` | Age in completed years from a birth-date column, as of today or another date column |
-| `clean(df, ...)` | Runs duplicates → missing → outliers → encoding → scaling in one call |
+| `clean(df, ...)` | Runs duplicates → missing values → outliers → encoding → scaling in one call |
 
-## Exploration: `toolkit.py`
+## Exploration: `dstoolkit.exploration`
 
 | Function | What it does |
 |---|---|
-| `drop_nulls(data)` | Copy of a Series/DataFrame with null rows removed |
-| `add_passed(df, grade_col, threshold)` | Adds a True/False column for values at or above a threshold |
 | `show_eda(series)` | Prints min, max, mean, median and mode |
 | `show_eda_table(series)` | `.describe()` statistics drawn as a table |
 | `show_histogram(series)` | Histogram with mean, median and mode lines |
@@ -67,30 +63,50 @@ df = pp.clean(
 | `show_density(series)` | Density curve with mean and median lines |
 | `show_distribution_profile(series)` | 2×2 overview: histogram, density, boxplot, summary table |
 | `fit_line(x, y)` | Least-squares line; returns slope, intercept and a `predict` function |
+| `drop_nulls(data)` | Copy of a Series/DataFrame with null rows removed |
+| `add_passed(df, grade_col, threshold)` | Adds a True/False column for values at or above a threshold |
+
+Every function is also available directly from `dstoolkit`, as in the quick start.
 
 ## Notebooks
 
 | Notebook | Covers |
 |---|---|
-| `Using_Python_for_Data_Science_Example.ipynb` | numpy arrays, building and filtering DataFrames, handling nulls, `groupby`, sorting |
-| `Python_for_Data_Science_Matplotlib.ipynb` | bar, pie, histogram, box, density and scatter plots; normalization; correlation; linear regression |
-| `Data_Cleaning_Pipeline.ipynb` | building the distribution functions step by step, ending with the `toolkit.py` versions |
-| `Preprocessing_Titanic.ipynb` | every cleaning step applied to the Titanic passenger list, then the same steps in one `clean()` call |
-| `Toolkit_on_Titanic_Data.ipynb` | the toolkit applied unchanged to 1,309 Titanic passengers: missing ages, heavily skewed fares, fare by class |
+| [`Preprocessing_Titanic`](notebooks/Preprocessing_Titanic.ipynb) | Every cleaning step on the Titanic passenger list, then the same steps in one `clean()` call |
+| [`Toolkit_on_Titanic_Data`](notebooks/Toolkit_on_Titanic_Data.ipynb) | The exploration functions on real data: missing ages, heavily skewed fares, fare by class |
+| [`Data_Cleaning_Pipeline`](notebooks/Data_Cleaning_Pipeline.ipynb) | Building the distribution functions step by step |
+| [`Python_for_Data_Science_Matplotlib`](notebooks/Python_for_Data_Science_Matplotlib.ipynb) | Bar, pie, histogram, box, density and scatter plots; normalization; correlation; linear regression |
+| [`Using_Python_for_Data_Science_Example`](notebooks/Using_Python_for_Data_Science_Example.ipynb) | NumPy arrays, building and filtering DataFrames, handling nulls, `groupby`, sorting |
 
-## Tests
+## Project layout
 
-```bash
-pip install -e ".[dev]"
-pytest
+```
+src/dstoolkit/
+    __init__.py       top-level API and version
+    cleaning.py       duplicates, missing values, outliers, encoding, scaling, age
+    exploration.py    summaries, distribution plots, line fits
+    py.typed          marks the package as typed
+tests/                pytest suite
+notebooks/            demos and worked examples
+data/                 StudentData.csv, titanic3.csv
 ```
 
-The test suite (46 tests) checks every cleaning function, including that inputs are never modified, plus the line fit and that every plot draws without errors when values are missing. GitHub Actions runs the tests and every notebook on each push and pull request.
+## Development
+
+```bash
+git clone https://github.com/Dito-84/Data_Science_Toolkit
+cd Data_Science_Toolkit
+pip install -e ".[dev]"
+pytest    # 51 tests
+mypy      # type check
+```
+
+The tests check every function, including that inputs are never modified and that every plot draws when values are missing. GitHub Actions runs the type check, the tests and every notebook on Python 3.10 and 3.13 for each push and pull request. See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 ## Data
 
-- `StudentData.csv`: 17 students' study hours and grades (two rows deliberately missing)
-- `titanic3.csv`: Titanic passenger list from the Vanderbilt Biostatistics dataset, with `?` for missing values
+- `data/StudentData.csv`: 17 students' study hours and grades (two rows deliberately missing)
+- `data/titanic3.csv`: Titanic passenger list from the Vanderbilt Biostatistics dataset, with `?` for missing values
 
 ## Credits
 

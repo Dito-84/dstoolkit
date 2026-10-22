@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import preprocessing as pp
+import dstoolkit.cleaning as pp
 
 
 @pytest.fixture
@@ -161,6 +161,12 @@ def test_onehot_limit_warns():
     d = pd.DataFrame({"code": [f"c{i}" for i in range(12)]})
     with pytest.warns(UserWarning, match="adds 12 columns"):
         pp.encode_categorical(d, ["code"], verbose=False)
+
+
+def test_duplicate_column_names_give_clear_error():
+    d = pd.DataFrame([["a", "b"]], columns=["city", "city"])
+    with pytest.raises(ValueError, match="more than once"):
+        pp.encode_categorical(d, {"city": "label"}, verbose=False)
 
 
 def test_encoding_rejects_bad_input(df):
