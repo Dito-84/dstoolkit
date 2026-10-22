@@ -70,7 +70,7 @@ Each cleaning step prints a one-line summary of what it changed; pass `verbose=F
 
 | Function / method | What it does |
 |---|---|
-| `profile(df, title, charts)` | Builds the report |
+| `profile(df, title, charts, missing_ok)` | Builds the report; `missing_ok` names columns where blank is meaningful (no fill/drop advice) |
 | `report.save(path)` / `report.to_html()` | Self-contained HTML file or string |
 | `report.summary()` | One row per column: type, missing, unique values, outliers |
 | `report.suggestions` | The suggested steps as data (column, severity, message) |
