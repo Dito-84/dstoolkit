@@ -78,6 +78,12 @@ def _mark_center(ax, data, mode=True):
     ax.legend()
 
 
+def _trim_density(ax, data):
+    """Keep a density curve's x-axis near the data instead of far-off tails."""
+    pad = (data.max() - data.min()) * 0.1 or 1
+    ax.set_xlim(data.min() - pad, data.max() + pad)
+
+
 def show_histogram(var_data, title="Data Distribution"):
     """Histogram with mean, median and mode lines."""
     data = drop_nulls(var_data)
@@ -97,7 +103,7 @@ def show_distribution(var_data, title="Data Distribution"):
     ax[0].hist(data)
     ax[0].set_ylabel("Frequency")
     _mark_center(ax[0], data)
-    ax[1].boxplot(data, vert=False)
+    ax[1].boxplot(data, orientation="horizontal")
     ax[1].set_xlabel("Value")
     fig.suptitle(title)
     plt.show()
@@ -108,6 +114,7 @@ def show_density(var_data, title="Data Density"):
     data = drop_nulls(var_data)
     fig, ax = plt.subplots(figsize=(10, 4))
     data.plot.density(ax=ax)
+    _trim_density(ax, data)
     _mark_center(ax, data, mode=False)
     ax.set_title(title)
     plt.show()
@@ -123,7 +130,8 @@ def show_distribution_profile(var_data, title="Data Distribution"):
     _mark_center(ax[0, 0], data, mode=False)
 
     data.plot.density(ax=ax[0, 1])
-    data.plot.box(ax=ax[1, 0], vert=False)
+    _trim_density(ax[0, 1], data)
+    ax[1, 0].boxplot(data, orientation="horizontal")
 
     ax[1, 1].axis("off")
     pd.plotting.table(ax[1, 1], data.describe().round(2), loc="center",
