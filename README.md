@@ -108,6 +108,10 @@ The tests check every function, including that inputs are never modified and tha
 - `data/StudentData.csv`: 17 students' study hours and grades (two rows deliberately missing)
 - `data/titanic3.csv`: Titanic passenger list from the Vanderbilt Biostatistics dataset, with `?` for missing values
 
+## License
+
+[MIT](LICENSE) © 2026 Rolando Rodriguez Jr.
+
 ## Credits
 
 The cleaning steps were inspired by [AutoClean](https://github.com/elisemercury/AutoClean) by Elise Landman (MIT License), an automated preprocessing pipeline for pandas. The functions here are independent implementations.
