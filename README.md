@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Dito-84/Data_Science_Toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/Dito-84/Data_Science_Toolkit/actions/workflows/ci.yml)
 
-**Data Science Toolkit**: a small, typed Python package for the first stages of a data project. It **cleans** a pandas DataFrame (duplicates, missing values, outliers, encoding, scaling) and **explores** it (summary statistics, distribution plots, line fits). Every function returns a new DataFrame, so your raw data is never changed, and every function copes with missing values on its own.
+**Data Science Toolkit**: a small, typed Python package for the first stages of a data project. It **profiles** a pandas DataFrame and suggests how to clean it, **cleans** it (duplicates, missing values, outliers, encoding, scaling) and **explores** it (summary statistics, distribution plots, line fits). Every function returns a new DataFrame, so your raw data is never changed, and every function copes with missing values on its own.
 
 ## Install
 
@@ -12,14 +12,28 @@ pip install git+https://github.com/Dito-84/Data_Science_Toolkit
 
 Requires Python 3.10+.
 
-## Quick start
+## Profile a dataset in one call
 
 ```python
 import pandas as pd
 import dstoolkit as dst
 
 raw = pd.read_csv("data/titanic3.csv", na_values="?")
+report = dst.profile(raw, title="Titanic passengers")
+report                       # shows inline in Jupyter
+report.save("report.html")   # one self-contained file to share
+print(report.code())         # the suggested cleaning steps as runnable code
+```
 
+The report covers the whole dataset (rows, duplicates, missing cells), every column (type, missing values, statistics, outliers and a chart) and the correlations between numeric columns. It also reads the data and **suggests cleaning steps, with ready-to-run `dstoolkit` code**: which columns are too sparse to keep, which to fill and how, long tails that suit a log scale, numbers stored as text, categories to encode, and identifier columns to leave out of models.
+
+[![Profile report](docs/profile.png)](docs/titanic_profile.html)
+
+[Download the full example report](docs/titanic_profile.html) (open it in a browser), or see the [`Profile_Titanic`](notebooks/Profile_Titanic.ipynb) notebook, which profiles the raw data, applies the suggested code and profiles the result.
+
+## Clean in one call
+
+```python
 df = dst.clean(
     raw,
     missing={"numeric": "median", "columns": ["age", "fare", "embarked"]},
@@ -52,6 +66,16 @@ Each cleaning step prints a one-line summary of what it changed; pass `verbose=F
 | `add_age_column(df, dob_column, as_of)` | Age in completed years from a birth-date column, as of today or another date column |
 | `clean(df, ...)` | Runs duplicates → missing values → outliers → encoding → scaling in one call |
 
+## Profiling: `dstoolkit.profiling`
+
+| Function / method | What it does |
+|---|---|
+| `profile(df, title, charts)` | Builds the report |
+| `report.save(path)` / `report.to_html()` | Self-contained HTML file or string |
+| `report.summary()` | One row per column: type, missing, unique values, outliers |
+| `report.suggestions` | The suggested steps as data (column, severity, message) |
+| `report.code(df_name)` | The suggested steps as runnable code, one call per kind of step |
+
 ## Exploration: `dstoolkit.exploration`
 
 | Function | What it does |
@@ -70,13 +94,15 @@ Every function is also available directly from `dstoolkit`, as in the quick star
 
 ## Notebooks
 
+Worked examples on real data:
+
 | Notebook | Covers |
 |---|---|
+| [`Profile_Titanic`](notebooks/Profile_Titanic.ipynb) | Profile the raw data, apply the suggested code, profile again, and read what's left |
 | [`Preprocessing_Titanic`](notebooks/Preprocessing_Titanic.ipynb) | Every cleaning step on the Titanic passenger list, then the same steps in one `clean()` call |
 | [`Toolkit_on_Titanic_Data`](notebooks/Toolkit_on_Titanic_Data.ipynb) | The exploration functions on real data: missing ages, heavily skewed fares, fare by class |
-| [`Data_Cleaning_Pipeline`](notebooks/Data_Cleaning_Pipeline.ipynb) | Building the distribution functions step by step |
-| [`Python_for_Data_Science_Matplotlib`](notebooks/Python_for_Data_Science_Matplotlib.ipynb) | Bar, pie, histogram, box, density and scatter plots; normalization; correlation; linear regression |
-| [`Using_Python_for_Data_Science_Example`](notebooks/Using_Python_for_Data_Science_Example.ipynb) | NumPy arrays, building and filtering DataFrames, handling nulls, `groupby`, sorting |
+
+[`notebooks/learning/`](notebooks/learning/) keeps the tutorial notebooks the package grew out of: NumPy and pandas basics, matplotlib practice, and building the distribution functions step by step.
 
 ## Project layout
 
@@ -84,10 +110,13 @@ Every function is also available directly from `dstoolkit`, as in the quick star
 src/dstoolkit/
     __init__.py       top-level API and version
     cleaning.py       duplicates, missing values, outliers, encoding, scaling, age
+    profiling.py      profile() report and cleaning suggestions
     exploration.py    summaries, distribution plots, line fits
     py.typed          marks the package as typed
 tests/                pytest suite
-notebooks/            demos and worked examples
+notebooks/            worked examples on real data
+notebooks/learning/   tutorial notebooks
+docs/                 README screenshot and an example report
 data/                 StudentData.csv, titanic3.csv
 ```
 
@@ -97,11 +126,11 @@ data/                 StudentData.csv, titanic3.csv
 git clone https://github.com/Dito-84/Data_Science_Toolkit
 cd Data_Science_Toolkit
 pip install -e ".[dev]"
-pytest    # 51 tests
+pytest    # 67 tests
 mypy      # type check
 ```
 
-The tests check every function, including that inputs are never modified and that every plot draws when values are missing. GitHub Actions runs the type check, the tests and every notebook on Python 3.10 and 3.13 for each push and pull request. See [CHANGELOG.md](CHANGELOG.md) for version history.
+The tests check every function, including that inputs are never modified, that every plot draws when values are missing, that report HTML escapes column names, and that the code `profile()` suggests actually runs. GitHub Actions runs the type check, the tests and every notebook on Python 3.10 and 3.13 for each push and pull request. See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 ## Data
 

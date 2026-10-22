@@ -6,11 +6,13 @@ Everything is available from the top level:
 
     df = dst.clean(raw, missing={"numeric": "median"})
     dst.show_distribution_profile(df["age"])
+    dst.profile(df).save("report.html")
 
-or from its module: `dstoolkit.cleaning` and `dstoolkit.exploration`.
+or from its module: `dstoolkit.cleaning`, `dstoolkit.exploration` and
+`dstoolkit.profiling`.
 """
 
-from . import cleaning, exploration
+from . import cleaning, exploration, profiling
 from .cleaning import (
     add_age_column,
     clean,
@@ -23,6 +25,7 @@ from .cleaning import (
     remove_duplicates,
     winsorize,
 )
+from .profiling import ColumnProfile, Profile, Suggestion, profile
 from .exploration import (
     add_passed,
     drop_nulls,
@@ -35,6 +38,7 @@ from .exploration import (
     show_histogram,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
-__all__ = ["cleaning", "exploration", "__version__", *cleaning.__all__, *exploration.__all__]
+__all__ = ["cleaning", "exploration", "profiling", "__version__",
+           *cleaning.__all__, *exploration.__all__, *profiling.__all__]

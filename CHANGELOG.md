@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+
+- **`dst.profile(df)`**: a one-call dataset report covering the overview (rows, duplicates, missing cells, memory), every column (type, missing values, statistics, outliers, chart) and correlations. It also suggests cleaning steps, ranked by severity, with ready-to-run `dstoolkit` code from `report.code()`. The report shows inline in Jupyter or saves as one self-contained HTML file.
+- Suggestions avoid common bad advice: small count columns don't get outlier warnings; long right tails get a log transform instead of capping; columns to be dropped get no other steps; and steps already applied (an existing `_log` or encoded column) aren't suggested again.
+- `Profile_Titanic` notebook and an example report in `docs/`.
+- Tutorial notebooks moved to `notebooks/learning/`, so the worked examples lead.
+- MIT license.
+
 ## 0.3.0
 
 Restructured into an installable, typed package.
