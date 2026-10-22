@@ -18,6 +18,7 @@ import base64
 import html
 import io
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -111,11 +112,15 @@ class Profile:
             "unique": c.unique, "outliers": c.outliers,
         } for c in self.columns]).set_index("column")
 
-    def code(self, df_name: str = "df") -> str:
-        """The suggested cleaning steps as runnable Python, one call per kind of step."""
+    def code(self, df_name: str = "df", suggestions: Iterable[Suggestion] | None = None) -> str:
+        """The suggested cleaning steps as runnable Python, one call per kind of step.
+
+        suggestions: only include these (e.g. the ones a user ticked); default all.
+        """
         d = df_name
+        chosen = self.suggestions if suggestions is None else list(suggestions)
         groups: dict[tuple[str, tuple[tuple[str, Any], ...]], list[Suggestion]] = {}
-        for s in self.suggestions:
+        for s in chosen:
             if s.action:
                 groups.setdefault((s.action, tuple(sorted(s.options.items()))), []).append(s)
 

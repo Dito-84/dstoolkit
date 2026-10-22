@@ -17,7 +17,6 @@ from typing import Callable, TypeVar
 import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.axes import Axes
-from scipy import stats
 
 __all__ = [
     "drop_nulls",
@@ -156,6 +155,8 @@ def fit_line(x: pd.Series, y: pd.Series) -> tuple[float, float, Callable[[float]
     `predict` is a function that uses the fitted m and b, so predictions
     always match the data instead of hardcoded numbers.
     """
+    from scipy import stats  # imported here so the rest of the package loads without scipy
+
     pairs = pd.concat([pd.Series(x).rename("x"), pd.Series(y).rename("y")], axis=1).dropna()
     result = stats.linregress(pairs["x"], pairs["y"])
     m, b = float(result.slope), float(result.intercept)

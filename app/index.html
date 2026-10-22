@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dstoolkit: Clean a Dataset</title>
+<meta name="description" content="Drop a CSV or Excel file to profile it, choose cleaning steps, and download the cleaned data. Runs entirely in your browser.">
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #17202b; --muted: #5d6877; --line: #e2e6eb;
+    --accent: #1f6feb; --accent-ink: #ffffff; --accent-soft: #e8f0fe;
+    --ok: #1a7f37; --ok-soft: #e7f5ec; --err: #b42318; --err-soft: #fdecea;
+    --high: #b42318; --med: #9a5b00; --low: #3b5b8a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f141a; --panel: #171e26; --ink: #e6ebf1; --muted: #98a3b1; --line: #29323d;
+      --accent: #5c9dff; --accent-ink: #0b1220; --accent-soft: #1d2e47;
+      --ok: #6fd58f; --ok-soft: #14301f; --err: #ff8a80; --err-soft: #3a1c1a;
+      --high: #ff8a80; --med: #f5c77e; --low: #9cc2ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 28px 16px 56px; }
+  header .brand { font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+  header h1 { font-size: 28px; line-height: 1.2; margin: 4px 0 8px; letter-spacing: -0.01em; }
+  header p { margin: 0; color: var(--muted); max-width: 720px; }
+  .privacy { display: inline-flex; gap: 8px; align-items: center; margin-top: 12px; padding: 6px 12px;
+             border-radius: 999px; background: var(--ok-soft); color: var(--ok); font-size: 13.5px; font-weight: 500; }
+  .status { margin: 18px 0 12px; font-size: 14px; color: var(--muted); min-height: 21px; }
+  .status.error { color: var(--err); }
+  .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--line); border-top-color: var(--accent);
+             border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -1px; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+  .drop { border: 2px dashed var(--line); border-radius: 14px; background: var(--panel); padding: 34px 20px;
+          text-align: center; transition: border-color .15s, background .15s; }
+  .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  .drop strong { display: block; font-size: 17px; margin-bottom: 4px; }
+  .drop .hint { color: var(--muted); font-size: 14px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 16px; }
+  button, .button { font: inherit; font-size: 14px; font-weight: 600; border-radius: 8px; padding: 9px 16px; cursor: pointer;
+           border: 1px solid var(--line); background: var(--panel); color: var(--ink); text-decoration: none; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button:focus-visible, .button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .hidden { display: none !important; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; margin-top: 18px; }
+  .card h2 { font-size: 18px; margin: 0 0 4px; }
+  .card .sub { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
+  .plan { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  .plan label { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-radius: 8px; cursor: pointer;
+                border: 1px solid var(--line); }
+  .plan label:hover { background: var(--accent-soft); }
+  .plan input { margin-top: 3px; width: 16px; height: 16px; flex: none; accent-color: var(--accent); }
+  .sev { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; min-width: 54px; flex: none; margin-top: 2px; }
+  .sev.high { color: var(--high); } .sev.medium { color: var(--med); } .sev.low { color: var(--low); }
+  .plan code { font-size: 13px; }
+  .notes { margin: 12px 0 0; padding-left: 18px; color: var(--muted); font-size: 14px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; }
+  .toolbar .spacer { flex: 1; }
+  .linkish { border: 0; background: none; color: var(--accent); padding: 4px 6px; font-weight: 500; }
+  .result-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; }
+  .log { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font: 12.5px/1.5 ui-monospace, Menlo, monospace;
+         white-space: pre-wrap; margin: 10px 0; }
+  .downloads { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
+  .preview { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+  .preview-table { border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; width: 100%; }
+  .preview-table th, .preview-table td { padding: 5px 9px; border-bottom: 1px solid var(--line); white-space: nowrap; text-align: left; }
+  .preview-table th { background: var(--bg); font-weight: 600; }
+  #report { margin-top: 28px; }
+  footer { margin-top: 36px; color: var(--muted); font-size: 13px; }
+  footer a { color: var(--accent); }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">dstoolkit</div>
+    <h1>Clean a dataset in your browser</h1>
+    <p>Drop a CSV or Excel file to get a profile of every column and a list of suggested cleaning steps.
+      Pick the ones you want, then download the cleaned data, the report, and a Python script that repeats the same steps.</p>
+    <div class="privacy">🔒 Your file never leaves this page. Python runs on your own computer.</div>
+  </header>
+
+  <div class="status" id="status" role="status" aria-live="polite"></div>
+
+  <section class="drop" id="drop">
+    <strong>Drop a file here</strong>
+    <span class="hint">.csv, .tsv, .txt or .xlsx</span>
+    <div class="actions">
+      <label class="button" for="file">Choose a file</label>
+      <input type="file" id="file" class="sr-only" accept=".csv,.tsv,.txt,.xlsx,.xlsm,text/csv">
+      <button type="button" id="sample">Try the Titanic sample</button>
+    </div>
+  </section>
+
+  <section class="card hidden" id="plan-card">
+    <h2>Cleaning plan</h2>
+    <p class="sub" id="plan-sub"></p>
+    <ul class="plan" id="plan"></ul>
+    <ul class="notes" id="notes"></ul>
+    <div class="toolbar">
+      <button type="button" class="linkish" id="all">Select all</button>
+      <button type="button" class="linkish" id="none">Select none</button>
+      <span class="spacer"></span>
+      <button type="button" class="primary" id="clean">Clean data</button>
+    </div>
+  </section>
+
+  <section class="card hidden" id="result-card">
+    <div class="result-head"><h2>Cleaned data</h2><span class="sub" id="result-sub"></span></div>
+    <div class="log" id="log"></div>
+    <div class="downloads">
+      <button type="button" class="primary" id="dl-csv">Download cleaned CSV</button>
+      <button type="button" id="dl-script">Download Python script</button>
+      <button type="button" id="dl-report">Download report (HTML)</button>
+    </div>
+    <p class="sub">First 10 rows:</p>
+    <div class="preview" id="preview"></div>
+  </section>
+
+  <section id="report"></section>
+
+  <footer>
+    Built with <a href="https://github.com/Dito-84/Data_Science_Toolkit">dstoolkit</a> and
+    <a href="https://pyodide.org">Pyodide</a>, which runs Python in the browser.
+    Suggestions are a starting point: review them before relying on the result.
+  </footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyodide.js"></script>
+<script>
+const PYODIDE_INDEX = "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/";
+const WHEEL = "__WHEEL__";            // filled in by app/build.py
+const $ = id => document.getElementById(id);
+
+let py = null, core = null, ready = null, current = null, cleaned = null;
+
+function setStatus(text, { busy = false, error = false } = {}) {
+  const el = $("status");
+  el.className = "status" + (error ? " error" : "");
+  el.innerHTML = (busy ? '<span class="spinner" aria-hidden="true"></span>' : "") + escapeHtml(text);
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+async function boot() {
+  const started = performance.now();
+  setStatus("Loading Python (the first visit downloads about 25 MB; later visits are faster)…", { busy: true });
+  py = await loadPyodide({ indexURL: PYODIDE_INDEX });
+  setStatus("Loading pandas and matplotlib…", { busy: true });
+  await py.loadPackage(["micropip", "pandas", "matplotlib"]);
+  setStatus("Loading dstoolkit…", { busy: true });
+  const micropip = py.pyimport("micropip");
+  await micropip.install.callKwargs(new URL(WHEEL, location.href).href, { deps: false });
+  const source = await (await fetch("app_core.py")).text();
+  py.FS.writeFile("/home/pyodide/app_core.py", source);
+  core = py.pyimport("app_core");
+  const seconds = ((performance.now() - started) / 1000).toFixed(0);
+  setStatus(`Ready (loaded in ${seconds}s). Drop a file or try the sample.`);
+  document.body.dataset.ready = "true";
+}
+
+async function analyze(name, bytes) {
+  if (!(await ready)) return;   // Python failed to load; the status line already says so
+  setStatus(`Profiling ${name}…`, { busy: true });
+  $("result-card").classList.add("hidden");
+  await new Promise(r => setTimeout(r, 30));  // let the status paint before Python blocks the page
+  try {
+    if (/\.xlsx?m?$/i.test(name)) {
+      setStatus("Loading Excel support…", { busy: true });
+      await py.pyimport("micropip").install("openpyxl");
+    }
+    py.FS.writeFile("/tmp/upload", bytes);
+    const result = JSON.parse(core.analyze_file(name, "/tmp/upload"));
+    if (!result.ok) { setStatus(result.error, { error: true }); return; }
+    current = { name, ...result };
+    renderPlan(result);
+    renderReport(result);
+    setStatus(`Profiled ${name}: ${result.rows.toLocaleString()} rows × ${result.columns} columns.`);
+    document.body.dataset.analyzed = "true";
+  } catch (err) {
+    console.error(err);
+    setStatus("Something went wrong reading that file. Check that it's a table (CSV or Excel).", { error: true });
+  }
+}
+
+function renderPlan(result) {
+  const steps = result.suggestions.filter(s => s.actionable);
+  const notes = result.suggestions.filter(s => !s.actionable);
+  $("plan-sub").textContent = steps.length
+    ? `${steps.length} suggested step${steps.length === 1 ? "" : "s"}. Untick any you don't want.`
+    : "No cleaning steps suggested for this file.";
+  $("plan").innerHTML = steps.map(s => `
+    <li><label>
+      <input type="checkbox" data-id="${s.id}" checked>
+      <span class="sev ${s.severity}">${s.severity}</span>
+      <span>${s.column ? `<code>${escapeHtml(s.column)}</code>: ` : ""}${escapeHtml(s.message)}</span>
+    </label></li>`).join("");
+  $("notes").innerHTML = notes.map(s =>
+    `<li>${s.column ? `<code>${escapeHtml(s.column)}</code>: ` : ""}${escapeHtml(s.message)}</li>`).join("");
+  $("plan-card").classList.remove("hidden");
+}
+
+function renderReport(result) {
+  if (!$("report-style")) {
+    const style = document.createElement("style");
+    style.id = "report-style";
+    style.textContent = result.css;
+    document.head.appendChild(style);
+  }
+  $("report").innerHTML = result.html;   // generated and escaped by dstoolkit
+}
+
+async function runClean() {
+  const ids = [...document.querySelectorAll("#plan input:checked")].map(i => Number(i.dataset.id));
+  setStatus("Cleaning…", { busy: true });
+  await new Promise(r => setTimeout(r, 30));
+  const result = JSON.parse(core.clean(JSON.stringify(ids)));
+  if (!result.ok) { setStatus(result.error, { error: true }); return; }
+  cleaned = result;
+  $("result-sub").textContent = `${result.rows.toLocaleString()} rows × ${result.columns} columns`;
+  $("log").textContent = result.log;
+  $("preview").innerHTML = result.preview;   // escaped by pandas
+  $("result-card").classList.remove("hidden");
+  $("result-card").scrollIntoView({ behavior: "smooth", block: "start" });
+  setStatus(`Applied ${ids.length} step${ids.length === 1 ? "" : "s"}. Download the results below.`);
+  document.body.dataset.cleaned = "true";
+}
+
+function download(text, name, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = Object.assign(document.createElement("a"), { href: url, download: name });
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ---------- wiring ----------
+const drop = $("drop");
+["dragenter", "dragover"].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", async ev => {
+  const file = ev.dataTransfer.files[0];
+  if (file) analyze(file.name, new Uint8Array(await file.arrayBuffer()));
+});
+$("file").addEventListener("change", async ev => {
+  const file = ev.target.files[0];
+  if (file) analyze(file.name, new Uint8Array(await file.arrayBuffer()));
+  ev.target.value = "";
+});
+$("sample").addEventListener("click", async () => {
+  try {
+    const response = await fetch("sample/titanic3.csv");
+    if (!response.ok) throw new Error(response.statusText);
+    analyze("titanic3.csv", new Uint8Array(await response.arrayBuffer()));
+  } catch (err) {
+    setStatus("Couldn't load the sample file. Try dropping your own file instead.", { error: true });
+  }
+});
+$("all").addEventListener("click", () => document.querySelectorAll("#plan input").forEach(i => i.checked = true));
+$("none").addEventListener("click", () => document.querySelectorAll("#plan input").forEach(i => i.checked = false));
+$("clean").addEventListener("click", runClean);
+$("dl-csv").addEventListener("click", () => download(cleaned.csv, cleaned.clean_name, "text/csv"));
+$("dl-script").addEventListener("click", () => download(cleaned.script, cleaned.clean_name.replace(/_clean\.csv$/, "_clean.py"), "text/x-python"));
+$("dl-report").addEventListener("click", () => download(core.report_html(), current.name.replace(/\.[^.]+$/, "") + "_report.html", "text/html"));
+
+ready = boot().then(() => true, err => {
+  console.error(err);
+  setStatus("Couldn't load Python in this browser. Check your connection and reload the page.", { error: true });
+  return false;
+});
+</script>
+</body>
+</html>

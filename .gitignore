@@ -6,3 +6,5 @@ __pycache__/
 build/
 dist/
 .venv/
+_site/
+_screenshots/

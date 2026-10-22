@@ -165,3 +165,12 @@ def test_steps_already_applied_are_not_suggested_again(messy):
     actions = {(s.column, s.action) for s in dst.profile(done, charts=False).suggestions}
     assert ("income", "log_transform") not in actions
     assert ("sex", "encode") not in actions and ("plan", "encode") not in actions
+
+
+def test_code_for_chosen_suggestions_only(messy):
+    r = dst.profile(messy, charts=False)
+    keep = [s for s in r.suggestions if s.action == "drop"]
+    code = r.code(suggestions=keep)
+    assert "drop(columns=" in code
+    assert "fill_missing" not in code and "encode_categorical" not in code
+    assert "# No cleaning steps suggested" in r.code(suggestions=[])
