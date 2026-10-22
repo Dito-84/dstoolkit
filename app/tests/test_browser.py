@@ -10,9 +10,7 @@ import functools
 import http.server
 import io
 import os
-import sys
 import threading
-import time
 from pathlib import Path
 
 import pandas as pd
@@ -70,25 +68,15 @@ def _download(page, button, tmp_path):
     return path
 
 
-def _notice(title, message):
-    """Show a note on the CI run (readable via the GitHub API) when running in GitHub Actions."""
-    if os.environ.get("GITHUB_ACTIONS"):
-        sys.__stdout__.write(f"::notice title={title}::{message}\n")
-
-
 def test_loads_without_errors(page):
-    status = page.inner_text("#status")
-    _notice("App load", status)
-    assert "Ready" in status
+    assert "Ready" in page.inner_text("#status")
     assert page.errors == []
     page.screenshot(path=SHOTS / "1_ready.png")
 
 
 def test_sample_is_profiled(page):
-    started = time.monotonic()
     page.click("#sample")
     page.wait_for_selector("body[data-analyzed=true]", timeout=120_000)
-    _notice("Profile step", f"Profiling the sample took {time.monotonic() - started:.1f}s")
     steps = page.locator("#plan input[type=checkbox]")
     assert steps.count() >= 5
     assert "1,309 rows" in page.inner_text("#status")
@@ -101,10 +89,8 @@ def test_sample_is_profiled(page):
 def test_clean_with_one_step_unticked(page, tmp_path):
     age_fill = page.locator("#plan label", has_text="263 missing").locator("input")
     age_fill.uncheck()
-    started = time.monotonic()
     page.click("#clean")
     page.wait_for_selector("body[data-cleaned=true]", timeout=60_000)
-    _notice("Clean step", f"Cleaning the sample took {time.monotonic() - started:.1f}s")
     assert page.is_visible("#result-card")
     page.screenshot(path=SHOTS / "3_cleaned.png", full_page=True)
 
