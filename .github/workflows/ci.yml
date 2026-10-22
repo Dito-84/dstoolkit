@@ -64,7 +64,11 @@ jobs:
       - name: Browser tests
         env:
           BROWSER_TESTS: "1"
-        run: pytest -v app/tests/test_browser.py
+        run: |
+          pytest -v --tb=short app/tests/test_browser.py --junitxml=browser.xml || {
+            python app/tests/ci_annotations.py browser.xml
+            exit 1
+          }
 
       - name: Save screenshots
         if: always()
