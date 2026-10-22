@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Dito-84/Data_Science_Toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/Dito-84/Data_Science_Toolkit/actions/workflows/ci.yml)
 
-A small Python module for quick exploratory data analysis (distributions, summary tables and line fits), plus the notebooks it was built in. It works on any numeric pandas column and handles missing values on its own.
+Two small Python modules for the first stages of a data project: **`preprocessing.py`** cleans a dataset (duplicates, missing values, outliers, encoding, scaling) and **`toolkit.py`** explores it (distributions, summary tables, line fits). Both work on any pandas DataFrame and handle missing values on their own.
 
 ## Install
 
@@ -25,7 +25,36 @@ m, b, predict = toolkit.fit_line(df.StudyHours, df.Grade)
 predict(9)  # ≈ 66.6
 ```
 
-## Functions
+## Cleaning: `preprocessing.py`
+
+Each function returns a new DataFrame (the input is never changed) and prints a one-line summary of what it did; pass `verbose=False` to silence it.
+
+```python
+import preprocessing as pp
+
+df = pp.clean(
+    raw,
+    missing={"numeric": "median", "columns": ["age", "fare", "embarked"]},
+    outliers={"columns": ["fare"], "action": "cap"},
+    encode={"columns": {"sex": "label", "embarked": "onehot"}},
+    scale={"columns": {"age": "minmax", "fare": "zscore"}},
+)
+```
+
+| Function | What it does |
+|---|---|
+| `remove_duplicates(df, subset, keep)` | Drops duplicate rows, optionally judged on a subset of columns |
+| `fill_missing(df, numeric, categorical, columns)` | Fills gaps: mean, median, zero or k-nearest-neighbours for numbers; most frequent value or "Missing" for text |
+| `find_outliers(df, columns, method)` | True/False table of outliers by IQR or z-score |
+| `handle_outliers(df, columns, method, action)` | Removes outlier rows, or caps values at the bounds and keeps the rows |
+| `winsorize(df, columns, lower, upper)` | Clips columns to percentiles (default 5th–95th) |
+| `log_transform(df, columns, suffix)` | log(1 + x) for long right-tailed columns like income or price |
+| `encode_categorical(df, columns)` | One-hot or label encoding per column; label codes keep missing values missing |
+| `normalize(df, columns)` | Min-max (0–1) or z-score scaling per column |
+| `add_age_column(df, dob_column, as_of)` | Age in completed years from a birth-date column, as of today or another date column |
+| `clean(df, ...)` | Runs duplicates → missing → outliers → encoding → scaling in one call |
+
+## Exploration: `toolkit.py`
 
 | Function | What it does |
 |---|---|
@@ -46,6 +75,7 @@ predict(9)  # ≈ 66.6
 | `Using_Python_for_Data_Science_Example.ipynb` | numpy arrays, building and filtering DataFrames, handling nulls, `groupby`, sorting |
 | `Python_for_Data_Science_Matplotlib.ipynb` | bar, pie, histogram, box, density and scatter plots; normalization; correlation; linear regression |
 | `Data_Cleaning_Pipeline.ipynb` | building the distribution functions step by step, ending with the `toolkit.py` versions |
+| `Preprocessing_Titanic.ipynb` | every cleaning step applied to the Titanic passenger list, then the same steps in one `clean()` call |
 | `Toolkit_on_Titanic_Data.ipynb` | the toolkit applied unchanged to 1,309 Titanic passengers: missing ages, heavily skewed fares, fare by class |
 
 ## Tests
@@ -55,9 +85,13 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The test suite checks the data helpers, the line fit (against a known line and the student data) and that every plot draws without errors when values are missing. GitHub Actions runs the tests and every notebook on each push and pull request.
+The test suite (46 tests) checks every cleaning function, including that inputs are never modified, plus the line fit and that every plot draws without errors when values are missing. GitHub Actions runs the tests and every notebook on each push and pull request.
 
 ## Data
 
 - `StudentData.csv`: 17 students' study hours and grades (two rows deliberately missing)
 - `titanic3.csv`: Titanic passenger list from the Vanderbilt Biostatistics dataset, with `?` for missing values
+
+## Credits
+
+The cleaning steps were inspired by [AutoClean](https://github.com/elisemercury/AutoClean) by Elise Landman (MIT License), an automated preprocessing pipeline for pandas. The functions here are independent implementations.
