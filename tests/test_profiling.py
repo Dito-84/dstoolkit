@@ -21,7 +21,8 @@ def messy():
         "visits": rng.integers(0, 4, n),                       # small counts
         "sex": rng.choice(["F", "M"], n),
         "plan": rng.choice(["Basic", "Plus", "Premium"], n),
-        "zip_text": [str(z) for z in rng.integers(10000, 99999, n)],  # numbers stored as text
+        "zip": [f"{z:05d}" for z in rng.integers(1000, 99999, n)],   # ID-like digits: keep as text
+        "amount_text": [f"{a:,.2f}" for a in rng.uniform(10, 5000, n)],  # numbers stored as text
         "notes": [None] * 150 + ["follow up"] * 50,            # mostly empty
         "country": ["US"] * n,                                 # constant
         "date_of_birth": pd.date_range("1950-01-01", periods=n, freq="70D").strftime("%Y-%m-%d"),
@@ -45,7 +46,7 @@ def test_profile_does_not_modify_input(messy):
 
 def test_overview_numbers(messy):
     r = dst.profile(messy, charts=False)
-    assert (r.n_rows, r.n_columns, r.duplicates) == (202, 11, 2)
+    assert (r.n_rows, r.n_columns, r.duplicates) == (202, 12, 2)
     assert r.missing_cells == int(messy.isna().sum().sum())
 
 
@@ -65,7 +66,8 @@ def test_suggestions_cover_each_issue(messy):
     assert ("blank", "drop") in actions
     assert ("country", "drop") in actions                  # constant
     assert ("notes", "drop") in actions                    # 75% missing
-    assert ("zip_text", "to_numeric") in actions
+    assert ("amount_text", "to_numeric") in actions
+    assert ("zip", "to_numeric") not in actions            # would strip leading zeros
     assert ("age", "fill_missing") in actions
     assert ("plan", "fill_missing") in actions
     assert ("income", "log_transform") in actions          # long tail, not capping
@@ -113,7 +115,11 @@ def test_generated_code_runs(messy):
     assert len(cleaned) == 200
     assert "blank" not in cleaned and "country" not in cleaned
     assert cleaned["age"].isna().sum() == 0
-    assert pd.api.types.is_numeric_dtype(cleaned["zip_text"])
+    assert pd.api.types.is_numeric_dtype(cleaned["amount_text"])
+    original = messy.drop_duplicates()["amount_text"].str.replace(",", "").astype(float).reset_index(drop=True)
+    pd.testing.assert_series_equal(cleaned["amount_text"].reset_index(drop=True), original,
+                                   check_names=False)   # values survive, commas and all
+    assert cleaned["zip"].str.len().eq(5).all()            # leading zeros kept
     assert {"sex_label", "plan_Basic", "income_log"} <= set(cleaned.columns)
 
 
@@ -174,3 +180,44 @@ def test_code_for_chosen_suggestions_only(messy):
     assert "drop(columns=" in code
     assert "fill_missing" not in code and "encode_categorical" not in code
     assert "# No cleaning steps suggested" in r.code(suggestions=[])
+
+
+def test_boolean_columns_get_no_encoding_advice():
+    df = pd.DataFrame({"flag": [True, False] * 30, "group": ["a", "b"] * 30})
+    actions = {(s.column, s.action) for s in dst.profile(df, charts=False).suggestions}
+    assert ("flag", "encode") not in actions
+    assert ("group", "encode") in actions
+
+
+def test_missing_ok_columns_are_not_filled_or_dropped():
+    n = 100
+    df = pd.DataFrame({
+        "patient": range(n),
+        "complication": [None] * 95 + ["Infection"] * 5,             # blank = no complication
+        "readmit_date": [None] * 97 + ["2020-01-05"] * 3,
+        "age": [60.0 + i % 25 for i in range(90)] + [None] * 10,
+    })
+    r = dst.profile(df, charts=False, missing_ok=["complication", "readmit_date"])
+    fill_or_drop = {(s.column, s.action) for s in r.suggestions if s.action in ("fill_missing", "drop")}
+    assert not {c for c, _ in fill_or_drop} & {"complication", "readmit_date"}
+    assert ("age", "fill_missing") in {(s.column, s.action) for s in r.suggestions}   # others unaffected
+    summary = r.summary()
+    assert summary.loc["complication", "missing_expected"]
+    assert summary.loc["complication", "missing_%"] == 95.0                          # still reported
+    assert "95.0% (expected)" in r.to_html()
+
+
+def test_missing_ok_rejects_unknown_columns():
+    with pytest.raises(KeyError, match="don't exist"):
+        dst.profile(pd.DataFrame({"a": [1, 2]}), missing_ok=["b"])
+
+
+@pytest.mark.parametrize("name,values", [
+    ("provider_id", ["10234", "10567", "11890"] * 10),
+    ("postal", ["30301", "60601", "94105"] * 10),
+    ("code", ["01234", "56789", "13579"] * 10),      # leading zero, generic name
+])
+def test_identifier_digits_are_not_converted(name, values):
+    df = pd.DataFrame({name: values})
+    actions = {s.action for s in dst.profile(df, charts=False).suggestions}
+    assert "to_numeric" not in actions

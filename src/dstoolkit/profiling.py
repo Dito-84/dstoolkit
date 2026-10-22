@@ -78,11 +78,17 @@ class ColumnProfile:
     top_values: list[tuple[str, int]] = field(default_factory=list)
     outliers: int | None = None
     chart: str | None = None  # base64 PNG
+    missing_expected: bool = False  # blanks carry meaning (see profile(missing_ok=...))
 
     @property
     def missing_share(self) -> float:
         total = self.count + self.missing
         return self.missing / total if total else 0.0
+
+    @property
+    def missing_label(self) -> str:
+        label = f"{100 * self.missing_share:.1f}%"
+        return f"{label} (expected)" if self.missing_expected and self.missing else label
 
 
 class Profile:
@@ -109,6 +115,7 @@ class Profile:
         return pd.DataFrame([{
             "column": c.name, "type": c.kind, "dtype": c.dtype, "non_missing": c.count,
             "missing": c.missing, "missing_%": round(100 * c.missing_share, 1),
+            "missing_expected": c.missing_expected,
             "unique": c.unique, "outliers": c.outliers,
         } for c in self.columns]).set_index("column")
 
@@ -135,7 +142,8 @@ class Profile:
             elif action == "drop":
                 lines.append(f"{d} = {d}.drop(columns={cols(items)})")
             elif action == "to_numeric":
-                lines += [f"{d}[{i.column!r}] = pd.to_numeric({d}[{i.column!r}], errors='coerce')" for i in items]
+                lines += [f"{d}[{i.column!r}] = pd.to_numeric({d}[{i.column!r}].astype(str)"
+                          f".str.replace(',', '', regex=False).str.strip(), errors='coerce')" for i in items]
             elif action == "fill_missing":
                 key, method = next(iter(options.items()))
                 lines.append(f"{d} = dst.fill_missing({d}, {key}={method!r}, columns={cols(items)})")
@@ -196,7 +204,7 @@ class Profile:
         for c in self.columns:
             bar = f'<span class="dst-meter"><span style="width:{100 * c.missing_share:.0f}%"></span></span>'
             parts.append(f'<tr><td><a href="#dst-col-{_anchor(c.name)}">{e(c.name)}</a></td><td>{e(c.kind)}</td>'
-                         f'<td>{bar} {100 * c.missing_share:.1f}%</td><td>{c.unique:,}</td>'
+                         f'<td>{bar} {e(c.missing_label)}</td><td>{c.unique:,}</td>'
                          f'<td>{e(_one_line(c))}</td></tr>')
         parts.append("</tbody></table></div>")
 
@@ -256,18 +264,25 @@ class Profile:
 # ---------- building the profile ----------
 
 def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = True,
-            max_categories: int = 10) -> Profile:
+            max_categories: int = 10, missing_ok: Iterable[str] = ()) -> Profile:
     """Profile a DataFrame: overview, per-column statistics, correlations and
     suggested cleaning steps.
 
     charts: draw a small chart for each column and a correlation heatmap
     max_categories: how many of the most common values to show per text column
+    missing_ok: columns where a blank means something (e.g. "no complication",
+                "not readmitted"), so they get no suggestions to fill or drop them
     """
     if df.shape[1] == 0:
         raise ValueError("DataFrame has no columns")
     if df.columns.duplicated().any():
         dupes = df.columns[df.columns.duplicated()].tolist()
         raise ValueError(f"Column name(s) {dupes} appear more than once; rename duplicates first")
+
+    expected = {str(c) for c in missing_ok}
+    unknown = sorted(expected - {str(c) for c in df.columns})
+    if unknown:
+        raise KeyError(f"missing_ok names columns that don't exist: {unknown}")
 
     columns: list[ColumnProfile] = []
     suggestions: list[Suggestion] = []
@@ -278,7 +293,8 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
 
     names = [str(c) for c in df.columns]
     for name in df.columns:
-        col_profile, col_suggestions = _profile_column(df[name], str(name), charts, max_categories)
+        col_profile, col_suggestions = _profile_column(df[name], str(name), charts, max_categories,
+                                                       str(name) in expected)
         columns.append(col_profile)
         suggestions.extend(s for s in col_suggestions if not _already_done(s, names))
 
@@ -323,22 +339,35 @@ def _kind(series: pd.Series) -> Kind:
     return "categorical"
 
 
+ID_NAME_HINT = re.compile(r"(^|[_\s])(id|code|zip|zipcode|postal|phone|ccn|npi|mrn|ssn|account)($|[_\s])|id$",
+                          re.IGNORECASE)
+
+
+def _looks_like_identifier(series: pd.Series) -> bool:
+    """Digit strings that are really labels (IDs, ZIP codes): converting them to numbers loses leading zeros."""
+    if ID_NAME_HINT.search(str(series.name or "")):
+        return True
+    text = series.dropna().astype(str).str.strip()
+    return bool(text.str.match(r"^0\d").any())
+
+
 def _numbers_stored_as_text(series: pd.Series) -> bool:
     values = series.dropna()
-    if values.empty or pd.api.types.is_numeric_dtype(series):
+    if values.empty or pd.api.types.is_numeric_dtype(series) or _looks_like_identifier(series):
         return False
     converted = pd.to_numeric(values.astype(str).str.replace(",", "", regex=False).str.strip(), errors="coerce")
     return bool(converted.notna().mean() >= 0.95)
 
 
-def _profile_column(series: pd.Series, name: str, charts: bool,
-                    max_categories: int) -> tuple[ColumnProfile, list[Suggestion]]:
+def _profile_column(series: pd.Series, name: str, charts: bool, max_categories: int,
+                    missing_expected: bool = False) -> tuple[ColumnProfile, list[Suggestion]]:
     kind = _kind(series)
     values = series.dropna()
     missing = int(series.isna().sum())
-    share = missing / len(series) if len(series) else 0.0
+    # When blanks are meaningful, profile the values but never suggest filling or dropping
+    share = 0.0 if missing_expected else (missing / len(series) if len(series) else 0.0)
     col = ColumnProfile(name=name, kind=kind, dtype=str(series.dtype), count=int(values.size),
-                        missing=missing, unique=int(values.nunique()))
+                        missing=missing, unique=int(values.nunique()), missing_expected=missing_expected)
     out: list[Suggestion] = []
 
     def suggest(step: str, severity: Severity, message: str, action: str | None = None,
@@ -346,7 +375,8 @@ def _profile_column(series: pd.Series, name: str, charts: bool,
         out.append(Suggestion(name, step, severity, message, action, options))
 
     if kind == "empty":
-        suggest("drop", "high", "Every value is missing; drop this column.", "drop")
+        if not missing_expected:
+            suggest("drop", "high", "Every value is missing; drop this column.", "drop")
         return col, out
 
     numeric_text = _numbers_stored_as_text(series)
@@ -405,7 +435,7 @@ def _profile_column(series: pd.Series, name: str, charts: bool,
             col.stats["avg length"] = float(values.astype(str).str.len().mean())
             suggest("note", "low", f"{col.unique:,} distinct values: likely an identifier or free text. "
                     f"Leave it out of encoding and models.")
-        elif not numeric_text:
+        elif kind == "categorical" and not numeric_text:  # True/False columns need no encoding
             if col.unique <= 2:
                 suggest("encode", "low", "Two categories; label-encode as 0/1 for modeling.", "encode",
                         method="label")
@@ -425,7 +455,8 @@ def _profile_column(series: pd.Series, name: str, charts: bool,
         if charts and kind in ("categorical", "boolean"):
             col.chart = _bars(counts.head(max_categories))
 
-    if col.unique == 1:
+    if col.unique == 1 and not (missing_expected and missing):
+        # (with meaningful blanks, "value vs blank" is the information, so one value is fine)
         out = [Suggestion(name, "drop", "medium",
                           f"Only one distinct value ({_fmt(values.iloc[0])}); it carries no information.", "drop")]
     elif share >= MOSTLY_EMPTY:

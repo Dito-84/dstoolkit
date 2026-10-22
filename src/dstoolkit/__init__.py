@@ -38,7 +38,7 @@ from .exploration import (
     show_histogram,
 )
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 __all__ = ["cleaning", "exploration", "profiling", "__version__",
            *cleaning.__all__, *exploration.__all__, *profiling.__all__]
