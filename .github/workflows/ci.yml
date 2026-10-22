@@ -33,7 +33,7 @@ jobs:
           MPLBACKEND: Agg
         run: |
           python -m ipykernel install --user --name python3
-          for nb in notebooks/*.ipynb; do
+          for nb in notebooks/*.ipynb notebooks/learning/*.ipynb; do
             echo "::group::$nb"
             jupyter nbconvert --to notebook --execute --stdout "$nb" > /dev/null
             echo "::endgroup::"
