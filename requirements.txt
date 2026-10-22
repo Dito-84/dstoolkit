@@ -1,6 +1,1 @@
-numpy
-pandas
-matplotlib>=3.10
-scipy
-scikit-learn
-jupyter
+-e .[notebooks]

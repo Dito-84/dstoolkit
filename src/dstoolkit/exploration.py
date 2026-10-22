@@ -1,17 +1,22 @@
-"""Reusable helpers for quick exploratory data analysis.
+"""Exploratory analysis: summaries, distribution plots and quick line fits.
 
-These are the functions developed in the notebooks in this repo, collected in
-one place so any notebook or script can use them:
+    import dstoolkit as dst
 
-    from toolkit import show_eda, show_distribution_profile
-    show_distribution_profile(df["Grade"])
+    dst.show_eda(df["Grade"])
+    dst.show_distribution_profile(df["Grade"], title="Grade Distribution")
+    m, b, predict = dst.fit_line(df["StudyHours"], df["Grade"])
 
 Every function drops null values first, so a column with missing data is
 safe to pass in directly.
 """
 
+from __future__ import annotations
+
+from typing import Callable, TypeVar
+
 import matplotlib.pyplot as plt
 import pandas as pd
+from matplotlib.axes import Axes
 from scipy import stats
 
 __all__ = [
@@ -26,8 +31,10 @@ __all__ = [
     "fit_line",
 ]
 
+PandasData = TypeVar("PandasData", pd.Series, pd.DataFrame)
 
-def drop_nulls(data):
+
+def drop_nulls(data: PandasData) -> PandasData:
     """Return a copy of a Series or DataFrame with null rows removed.
 
     Always returns data (the unchanged copy when there are no nulls), so the
@@ -36,14 +43,15 @@ def drop_nulls(data):
     return data.dropna(axis=0)
 
 
-def add_passed(df, grade_col="Grade", threshold=60, name="Passed"):
-    """Return a copy of df with a True/False column for grade >= threshold."""
+def add_passed(df: pd.DataFrame, grade_col: str = "Grade", threshold: float = 60,
+               name: str = "Passed") -> pd.DataFrame:
+    """Return a copy of df with a True/False column for values >= threshold."""
     out = df.copy()
     out[name] = out[grade_col] >= threshold
     return out
 
 
-def show_eda(var_data):
+def show_eda(var_data: pd.Series) -> None:
     """Print min, max, mean, median and mode for a numeric Series."""
     data = drop_nulls(var_data)
     if data.nunique() == len(data):
@@ -59,7 +67,7 @@ def show_eda(var_data):
     )
 
 
-def show_eda_table(var_data, decimals=2):
+def show_eda_table(var_data: pd.Series, decimals: int = 2) -> None:
     """Draw the .describe() statistics for a Series as a table figure."""
     data = drop_nulls(var_data)
     fig, ax = plt.subplots()
@@ -69,7 +77,7 @@ def show_eda_table(var_data, decimals=2):
     plt.show()
 
 
-def _mark_center(ax, data, mode=True):
+def _mark_center(ax: Axes, data: pd.Series, mode: bool = True) -> None:
     """Draw dashed lines for mean (cyan), median (red) and optionally mode (yellow)."""
     ax.axvline(x=data.mean(), color="cyan", linestyle="dashed", linewidth=2, label="Mean")
     ax.axvline(x=data.median(), color="red", linestyle="dashed", linewidth=2, label="Median")
@@ -78,13 +86,13 @@ def _mark_center(ax, data, mode=True):
     ax.legend()
 
 
-def _trim_density(ax, data):
+def _trim_density(ax: Axes, data: pd.Series) -> None:
     """Keep a density curve's x-axis near the data instead of far-off tails."""
     pad = (data.max() - data.min()) * 0.1 or 1
     ax.set_xlim(data.min() - pad, data.max() + pad)
 
 
-def show_histogram(var_data, title="Data Distribution"):
+def show_histogram(var_data: pd.Series, title: str = "Data Distribution") -> None:
     """Histogram with mean, median and mode lines."""
     data = drop_nulls(var_data)
     fig, ax = plt.subplots(figsize=(10, 4))
@@ -96,7 +104,7 @@ def show_histogram(var_data, title="Data Distribution"):
     plt.show()
 
 
-def show_distribution(var_data, title="Data Distribution"):
+def show_distribution(var_data: pd.Series, title: str = "Data Distribution") -> None:
     """Histogram (with center lines) stacked above a horizontal boxplot."""
     data = drop_nulls(var_data)
     fig, ax = plt.subplots(2, 1, figsize=(12.8, 7.2), sharex=True)
@@ -109,7 +117,7 @@ def show_distribution(var_data, title="Data Distribution"):
     plt.show()
 
 
-def show_density(var_data, title="Data Density"):
+def show_density(var_data: pd.Series, title: str = "Data Density") -> None:
     """Kernel density curve with mean and median lines."""
     data = drop_nulls(var_data)
     fig, ax = plt.subplots(figsize=(10, 4))
@@ -120,7 +128,7 @@ def show_density(var_data, title="Data Density"):
     plt.show()
 
 
-def show_distribution_profile(var_data, title="Data Distribution"):
+def show_distribution_profile(var_data: pd.Series, title: str = "Data Distribution") -> None:
     """2x2 overview: histogram, density curve, boxplot and summary table."""
     data = drop_nulls(var_data)
     fig, ax = plt.subplots(2, 2, figsize=(12.8, 7.2))
@@ -142,7 +150,7 @@ def show_distribution_profile(var_data, title="Data Distribution"):
     plt.show()
 
 
-def fit_line(x, y):
+def fit_line(x: pd.Series, y: pd.Series) -> tuple[float, float, Callable[[float], float]]:
     """Fit y = m*x + b by least squares and return (m, b, predict).
 
     `predict` is a function that uses the fitted m and b, so predictions
@@ -150,9 +158,9 @@ def fit_line(x, y):
     """
     pairs = pd.concat([pd.Series(x).rename("x"), pd.Series(y).rename("y")], axis=1).dropna()
     result = stats.linregress(pairs["x"], pairs["y"])
-    m, b = result.slope, result.intercept
+    m, b = float(result.slope), float(result.intercept)
 
-    def predict(value):
+    def predict(value: float) -> float:
         return m * value + b
 
     return m, b, predict

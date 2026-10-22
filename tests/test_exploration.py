@@ -6,8 +6,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
+from pathlib import Path
 
-import toolkit
+import dstoolkit.exploration as toolkit
 
 
 @pytest.fixture(autouse=True)
@@ -76,7 +77,7 @@ def test_fit_line_ignores_missing_pairs():
 
 
 def test_fit_line_matches_student_data():
-    df = pd.read_csv("StudentData.csv")
+    df = pd.read_csv(Path(__file__).resolve().parent.parent / "data" / "StudentData.csv")
     m, b, predict = toolkit.fit_line(df.StudyHours, df.Grade)
     assert m == pytest.approx(7.119, abs=0.001)
     assert b == pytest.approx(2.533, abs=0.001)
