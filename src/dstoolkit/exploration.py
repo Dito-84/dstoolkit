@@ -202,9 +202,10 @@ def show_counts(var_data: pd.Series, top: int = 15, include_missing: bool = True
     total = counts.sum()
 
     fig, ax = plt.subplots(figsize=(10, max(2.5, 0.4 * len(counts) + 1)))
-    labels = [str(v) for v in counts.index]
-    bars = ax.barh(labels[::-1], counts.values[::-1])
-    ax.bar_label(bars, labels=[f"{n:,} ({n / total:.0%})" for n in counts.values[::-1]], padding=3)
+    labels = [str(v) for v in counts.index][::-1]   # barh draws bottom-up; largest goes on top
+    sizes = [int(n) for n in counts.to_numpy()][::-1]
+    bars = ax.barh(labels, sizes)
+    ax.bar_label(bars, labels=[f"{n:,} ({n / total:.0%})" for n in sizes], padding=3)
     ax.set_xlim(0, counts.max() * 1.18)
     ax.set_xlabel("Count")
     ax.set_title(title or f"{_label(var_data, 'Values')}: counts")

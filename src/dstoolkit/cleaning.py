@@ -132,7 +132,7 @@ def _is_yes_no(series: pd.Series) -> bool:
     if not _is_text(series):
         return False
     present = _normalized(series).dropna()
-    return bool(len(present)) and present.isin(TRUE_WORDS | FALSE_WORDS).all()
+    return bool(len(present) and present.isin(TRUE_WORDS | FALSE_WORDS).all())
 
 
 def to_boolean(df: pd.DataFrame, columns: Sequence[str] | None = None, verbose: bool = True) -> pd.DataFrame:
