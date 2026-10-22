@@ -27,14 +27,13 @@ import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
 
-from .cleaning import DOB_NAME_HINTS, _bounds
+from .cleaning import DATE_PATTERN, DOB_NAME_HINTS, _bounds, _is_yes_no
 
 __all__ = ["profile", "Profile", "ColumnProfile", "Suggestion"]
 
 Kind = Literal["numeric", "categorical", "boolean", "datetime", "text", "empty"]
 Severity = Literal["high", "medium", "low"]
 
-DATE_PATTERN = re.compile(r"^\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})([ T]\d{1,2}:\d{2}.*)?\s*$")
 MOSTLY_EMPTY = 0.60          # share missing above which a column is suggested for dropping
 OUTLIER_SHARE_TO_CAP = 0.01  # share of outliers above which capping is suggested
 LONG_TAIL_SHARE = 0.10       # above this share, "outliers" are a long tail: suggest log, not capping
@@ -141,6 +140,10 @@ class Profile:
                 lines.append(f"{d} = dst.remove_duplicates({d})")
             elif action == "drop":
                 lines.append(f"{d} = {d}.drop(columns={cols(items)})")
+            elif action == "to_boolean":
+                lines.append(f"{d} = dst.to_boolean({d}, {cols(items)})")
+            elif action == "to_datetime":
+                lines.append(f"{d} = dst.to_datetime_columns({d}, {cols(items)})")
             elif action == "to_numeric":
                 lines += [f"{d}[{i.column!r}] = pd.to_numeric({d}[{i.column!r}].astype(str)"
                           f".str.replace(',', '', regex=False).str.strip(), errors='coerce')" for i in items]
@@ -164,6 +167,11 @@ class Profile:
             first = lines.index(encodes[0])
             lines = [line for line in lines if line not in encodes]
             lines.insert(first, f"{d} = dst.encode_categorical({d}, {{{merged}}})")
+
+        # type conversions first, so later steps see True/False and dates rather than text
+        conversions = ("dst.to_boolean(", "dst.to_datetime_columns(", "pd.to_numeric(")
+        lines = [l for l in lines if any(c in l for c in conversions)] + \
+                [l for l in lines if not any(c in l for c in conversions)]
 
         header = ["import pandas as pd"] if any("pd." in line for line in lines) else []
         header += ["import dstoolkit as dst", ""]
@@ -428,6 +436,9 @@ def _profile_column(series: pd.Series, name: str, charts: bool, max_categories: 
         if kind == "datetime":
             dates = values if pd.api.types.is_datetime64_any_dtype(series) else \
                 pd.to_datetime(values, errors="coerce", format="mixed")
+            if not pd.api.types.is_datetime64_any_dtype(series):
+                suggest("type", "medium", "Dates stored as text; convert to dates so they sort, filter "
+                        "and subtract correctly.", "to_datetime")
             col.stats = {"earliest": dates.min(), "latest": dates.max(), "unparseable": int(dates.isna().sum())}
             if any(h in name.lower().replace(" ", "_") for h in DOB_NAME_HINTS):
                 suggest("derive", "low", "Looks like a date of birth; derive an age column.", "add_age")
@@ -435,6 +446,8 @@ def _profile_column(series: pd.Series, name: str, charts: bool, max_categories: 
             col.stats["avg length"] = float(values.astype(str).str.len().mean())
             suggest("note", "low", f"{col.unique:,} distinct values: likely an identifier or free text. "
                     f"Leave it out of encoding and models.")
+        elif kind == "categorical" and _is_yes_no(series):
+            suggest("type", "medium", "Yes/No answers stored as text; convert to True/False.", "to_boolean")
         elif kind == "categorical" and not numeric_text:  # True/False columns need no encoding
             if col.unique <= 2:
                 suggest("encode", "low", "Two categories; label-encode as 0/1 for modeling.", "encode",
@@ -446,7 +459,11 @@ def _profile_column(series: pd.Series, name: str, charts: bool, max_categories: 
                 suggest("encode", "low", f"{col.unique} categories; label-encode, or group rare ones "
                         f"before one-hot encoding.", "encode", method="label")
 
-        if 0 < share < MOSTLY_EMPTY and kind in ("categorical", "boolean"):
+        if 0 < share < MOSTLY_EMPTY and kind == "boolean" and share >= 0.05:
+            # a True/False column can't hold a "Missing" label; its gaps can simply stay missing
+            suggest("missing", "medium", f"{missing:,} missing ({share:.1%}). A True/False column can keep these "
+                    f"as missing values; fill them only if a blank really means one answer.")
+        elif 0 < share < MOSTLY_EMPTY and kind in ("categorical", "boolean"):
             method = "most_frequent" if share < 0.05 else "missing"
             why = ("fill with the most common value" if method == "most_frequent"
                    else "fill with a 'Missing' category so the gap stays visible")

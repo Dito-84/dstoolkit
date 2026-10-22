@@ -4,7 +4,8 @@ Everything is available from the top level:
 
     import dstoolkit as dst
 
-    df = dst.clean(raw, missing={"numeric": "median"})
+    df = dst.convert_types(raw)         # yes/no text -> True/False, date text -> dates
+    df = dst.clean(df, missing={"numeric": "median"})
     dst.show_distribution_profile(df["age"])
     dst.profile(df).save("report.html")
 
@@ -16,6 +17,7 @@ from . import cleaning, exploration, profiling
 from .cleaning import (
     add_age_column,
     clean,
+    convert_types,
     encode_categorical,
     fill_missing,
     find_outliers,
@@ -23,6 +25,9 @@ from .cleaning import (
     log_transform,
     normalize,
     remove_duplicates,
+    to_boolean,
+    to_category,
+    to_datetime_columns,
     winsorize,
 )
 from .profiling import ColumnProfile, Profile, Suggestion, profile
@@ -35,10 +40,13 @@ from .exploration import (
     show_distribution_profile,
     show_eda,
     show_eda_table,
+    show_counts,
+    show_grouped_box,
     show_histogram,
+    show_scatter,
 )
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 
 __all__ = ["cleaning", "exploration", "profiling", "__version__",
            *cleaning.__all__, *exploration.__all__, *profiling.__all__]
