@@ -135,7 +135,7 @@ The tests check every function, including that inputs are never modified, that e
 ## Used in
 
 - **[Hip & Knee Replacement Outcomes Dashboard](https://github.com/Dito-84/hip-knee-replacement-outcomes-dashboard)**: `scripts/check_data.py` profiles a real discharge export before the dashboard is built, using `missing_ok` because a blank complication or readmission means "didn't happen"
-- **[Titanic Survival Prediction](https://github.com/Dito-84/RDR_Titanic_Project)**: a data-quality check before modeling. Its suggestions inform the choices, but missing ages are still filled inside each cross-validation fold so no test data leaks into training
+- **[Titanic Survival Prediction](https://github.com/Dito-84/titanic-survival-prediction)**: a data-quality check before modeling. Its suggestions inform the choices, but missing ages are still filled inside each cross-validation fold so no test data leaks into training
 
 Both use dstoolkit as an optional extra, pinned to a tested commit, so changes here can't break them.
 
