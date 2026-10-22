@@ -14,11 +14,17 @@ modified. Steps can be used on their own or chained with `clean()`:
     # or all at once
     df = dst.clean(df, missing={"numeric": "median"}, outliers={"columns": ["fare"], "action": "cap"})
 
+Columns read in as text can be given proper types first:
+
+    df = dst.convert_types(df)                  # yes/no -> True/False, date text -> dates
+    df = dst.to_category(df, ["hospital"])      # repeated labels -> pandas category
+
 Pass `verbose=False` to any function to silence its summary message.
 """
 
 from __future__ import annotations
 
+import re
 import warnings
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, Literal, Union
@@ -35,6 +41,10 @@ Scaling = Literal["minmax", "zscore"]
 StepOptions = Union[bool, Mapping[str, Any], None]
 
 __all__ = [
+    "to_boolean",
+    "to_datetime_columns",
+    "to_category",
+    "convert_types",
     "remove_duplicates",
     "fill_missing",
     "find_outliers",
@@ -46,6 +56,17 @@ __all__ = [
     "add_age_column",
     "clean",
 ]
+
+# Dates written as text: 2020-01-31, 2020/1/31, 01/31/2020, 31-1-20, optionally with a time
+DATE_PATTERN = re.compile(r"^\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})([ T]\d{1,2}:\d{2}.*)?\s*$")
+
+# Words read as True / False. 1/0 and t/f only count when you name the column,
+# because a text column of 0s and 1s is often a count or a code, not a yes/no answer.
+TRUE_WORDS = frozenset({"yes", "y", "true"})
+FALSE_WORDS = frozenset({"no", "n", "false"})
+TRUE_EXPLICIT = TRUE_WORDS | {"1", "t"}
+FALSE_EXPLICIT = FALSE_WORDS | {"0", "f"}
+BLANK_WORDS = frozenset({"", "n/a", "na", "nan", "none", "null"})
 
 DOB_NAME_HINTS = ("dob", "date_of_birth", "dateofbirth", "birth_date", "birthdate", "birthday")
 
@@ -85,6 +106,170 @@ def _position(df: pd.DataFrame, column: str) -> int:
     return loc
 
 
+# ---------- types ----------
+
+def _is_text(series: pd.Series) -> bool:
+    return pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series)
+
+
+def _normalized(series: pd.Series) -> pd.Series:
+    """Lower-case, trimmed text, with blank-like words (N/A, null, ...) turned into missing."""
+    text = series.astype("string").str.strip().str.lower()
+    return text.mask(text.isin(BLANK_WORDS))
+
+
+def _columns_to_check(df: pd.DataFrame, columns: Sequence[str] | None) -> tuple[list[str], bool]:
+    """(columns, explicit): the named columns, or every text column when none are named."""
+    if columns is None:
+        return [c for c in df.columns if _is_text(df[c])], False
+    columns = list(columns)
+    _check_columns(df, columns)
+    return columns, True
+
+
+def _is_yes_no(series: pd.Series) -> bool:
+    """True when every non-blank value is a yes/no word (yes/no, y/n, true/false, any case)."""
+    if not _is_text(series):
+        return False
+    present = _normalized(series).dropna()
+    return bool(len(present) and present.isin(TRUE_WORDS | FALSE_WORDS).all())
+
+
+def to_boolean(df: pd.DataFrame, columns: Sequence[str] | None = None, verbose: bool = True) -> pd.DataFrame:
+    """Convert yes/no columns to True/False (pandas' nullable boolean type).
+
+    Matching ignores case and spaces: yes/no, y/n and true/false. Blank cells and
+    words like "N/A" or "null" become missing values.
+
+    columns: the columns to convert. Default: every text column whose values are
+             ALL yes/no words; any other column is left exactly as it was. When you
+             name columns, 1/0 and t/f also count, and a column with any other value
+             raises an error instead of being guessed at.
+    """
+    targets, explicit = _columns_to_check(df, columns)
+    true_words, false_words = (TRUE_EXPLICIT, FALSE_EXPLICIT) if explicit else (TRUE_WORDS, FALSE_WORDS)
+
+    result = df.copy()
+    converted = []
+    for col in targets:
+        if pd.api.types.is_bool_dtype(result[col]):
+            continue
+        values = _normalized(result[col])
+        present = values.dropna()
+        if present.empty:
+            continue
+        unknown = sorted(set(present) - true_words - false_words)
+        if unknown:
+            if explicit:
+                raise ValueError(f"{col!r} has values that aren't yes/no: {unknown[:5]}")
+            continue
+        result[col] = values.map(lambda v: v in true_words if isinstance(v, str) else pd.NA).astype("boolean")
+        converted.append(col)
+    _say(verbose, f"Converted to True/False: {', '.join(map(str, converted))}." if converted
+         else "No yes/no columns to convert.")
+    return result
+
+
+def to_datetime_columns(df: pd.DataFrame, columns: Sequence[str] | None = None, min_share: float = 0.95,
+                        dayfirst: bool = False, format: str | None = None, verbose: bool = True) -> pd.DataFrame:
+    """Convert columns of dates stored as text into real dates.
+
+    columns: the columns to convert. Default: text columns where at least
+             `min_share` of the values look like dates (2020-01-31, 01/31/2020,
+             ...) and parse as dates. Number columns are never converted:
+             turning 3 into a date gives 1970-01-01, which is never what you want.
+    dayfirst: read 01/02/2020 as 1 February instead of 2 January
+    format: an exact format such as "%Y%m%d", for dates the default reading misses
+
+    Values that can't be read as dates become missing; the summary says how many.
+    """
+    if not 0 < min_share <= 1:
+        raise ValueError("min_share must be between 0 and 1")
+    targets, explicit = _columns_to_check(df, columns)
+
+    result = df.copy()
+    converted, notes = [], []
+    for col in targets:
+        series = result[col]
+        if pd.api.types.is_datetime64_any_dtype(series):
+            continue
+        if pd.api.types.is_numeric_dtype(series) or pd.api.types.is_bool_dtype(series):
+            if explicit:
+                raise TypeError(f"{col!r} holds numbers, not dates; converting would give 1970-01-01. "
+                                f"If they are dates written as numbers (e.g. 20200131), convert the column to "
+                                f"text first and pass format='%Y%m%d'.")
+            continue
+        text = _normalized(series)
+        present = text.dropna()
+        if present.empty:
+            continue
+        if not explicit and present.str.match(DATE_PATTERN).mean() < min_share:
+            continue
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            parsed = pd.to_datetime(text, errors="coerce", dayfirst=dayfirst,
+                                    format=format if format else "mixed")
+        failed = int(parsed[text.notna()].isna().sum())
+        if not explicit and 1 - failed / len(present) < min_share:
+            continue
+        result[col] = parsed
+        converted.append(col)
+        if failed:
+            notes.append(f"{failed} value(s) in {col!r} couldn't be read as dates and are now missing")
+    message = (f"Converted to dates: {', '.join(map(str, converted))}." if converted
+               else "No date columns to convert.")
+    _say(verbose, " ".join([message] + [n + "." for n in notes]))
+    return result
+
+
+def to_category(df: pd.DataFrame, columns: Sequence[str] | None = None, max_unique: int = 50,
+                verbose: bool = True) -> pd.DataFrame:
+    """Store repeated text labels (hospital, region, status) as pandas' category type.
+
+    Categories use far less memory than text, sort in a fixed order and show up
+    as groups in charts and summaries.
+
+    columns: the columns to convert. Default: text columns with at most
+             `max_unique` distinct values, where values repeat (fewer distinct
+             values than half the rows).
+    """
+    targets, explicit = _columns_to_check(df, columns)
+    result = df.copy()
+    converted = []
+    for col in targets:
+        if isinstance(result[col].dtype, pd.CategoricalDtype):
+            continue
+        present = result[col].dropna()
+        if not explicit and (present.empty or present.nunique() > max_unique
+                             or present.nunique() > len(present) / 2):
+            continue
+        result[col] = result[col].astype("category")
+        converted.append(col)
+    _say(verbose, f"Converted to category: {', '.join(map(str, converted))}." if converted
+         else "No columns to convert to category.")
+    return result
+
+
+def convert_types(df: pd.DataFrame, booleans: bool = True, dates: bool = True, categories: bool = False,
+                  verbose: bool = True) -> pd.DataFrame:
+    """Give text columns their proper types, using the safe defaults of each step.
+
+    Order: yes/no -> True/False, then date text -> dates, then (optional)
+    repeated labels -> category. Categories are off by default because later
+    steps that add new values, like fill_missing(categorical="missing"), need
+    the "Missing" label to exist as a category first; this function's output
+    works with every other dstoolkit step either way.
+    """
+    result = df
+    if booleans:
+        result = to_boolean(result, verbose=verbose)
+    if dates:
+        result = to_datetime_columns(result, verbose=verbose)
+    if categories:
+        result = to_category(result, verbose=verbose)
+    return result
+
+
 # ---------- duplicates ----------
 
 def remove_duplicates(df: pd.DataFrame, subset: Sequence[str] | None = None,
@@ -120,7 +305,8 @@ def fill_missing(df: pd.DataFrame, numeric: NumericFill | None = "mean",
     numeric: 'mean', 'median', 'knn' (estimate from the n_neighbors most similar
              rows), 'zero', or None to leave numeric gaps alone
     categorical: 'most_frequent', 'missing' (fill with the word "Missing"),
-                 or None to leave them alone
+                 or None to leave them alone. With 'missing', gaps in True/False
+                 columns (from to_boolean) stay missing, since they can't hold text.
     drop_empty_rows: first drop rows where every value is missing
     """
     if numeric not in NUMERIC_FILL:
@@ -160,20 +346,29 @@ def fill_missing(df: pd.DataFrame, numeric: NumericFill | None = "mean",
                 value = {"mean": result[col].mean(), "median": result[col].median(), "zero": 0}[numeric]
                 result[col] = result[col].fillna(value)
 
+    kept_bool = []
     if cat_cols and categorical is not None:
         for col in cat_cols:
+            if categorical == "missing" and isinstance(result[col].dtype, pd.BooleanDtype):
+                kept_bool.append(col)  # True/False columns can't hold the word "Missing"; the gaps stay missing
+                continue
             if categorical == "most_frequent":
                 mode = result[col].mode(dropna=True)
                 if mode.empty:
                     continue  # column is entirely empty; nothing to copy from
                 result[col] = result[col].fillna(mode.iloc[0])
             else:
+                if isinstance(result[col].dtype, pd.CategoricalDtype) and "Missing" not in result[col].cat.categories:
+                    result[col] = result[col].cat.add_categories("Missing")
                 result[col] = result[col].fillna("Missing")
 
     done = {c: int(filled[c] - result[c].isna().sum()) for c in num_cols + cat_cols}
     done = {c: n for c, n in done.items() if n}
     _say(verbose, "Filled missing values: " + ", ".join(f"{c} ({n})" for c, n in done.items())
          if done else "No missing values filled.")
+    if kept_bool:
+        _say(verbose, f"Left gaps in True/False column(s) {', '.join(map(str, kept_bool))} as missing; "
+                      f"use categorical='most_frequent' to fill them instead.")
     return result
 
 
@@ -384,12 +579,13 @@ def add_age_column(df: pd.DataFrame, dob_column: str | None = None,
 
 # ---------- pipeline ----------
 
-def clean(df: pd.DataFrame, duplicates: StepOptions = True, missing: StepOptions = True,
+def clean(df: pd.DataFrame, types: StepOptions = None, duplicates: StepOptions = True, missing: StepOptions = True,
           outliers: StepOptions = None, encode: StepOptions = None, scale: StepOptions = None,
           verbose: bool = True) -> pd.DataFrame:
     """Run the cleaning steps in a sensible order and return a new DataFrame.
 
-    Order: duplicates -> missing values -> outliers -> encoding -> normalization.
+    Order: types -> duplicates -> missing values -> outliers -> encoding -> normalization.
+    The types step (convert_types) is off unless you pass types=True or a dict.
     Each argument is True (use defaults), False/None (skip), or a dict of options
     passed to the matching function, for example:
 
@@ -410,6 +606,8 @@ def clean(df: pd.DataFrame, duplicates: StepOptions = True, missing: StepOptions
             raise ValueError(f"{step} needs the columns to process, e.g. {step}={{'columns': {{...}}}}")
 
     result = df
+    if types:
+        result = convert_types(result, verbose=verbose, **opts(types))
     if duplicates:
         result = remove_duplicates(result, verbose=verbose, **opts(duplicates))
     if missing:

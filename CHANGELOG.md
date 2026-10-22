@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0
+
+New functions, rewritten from earlier sandbox versions so they can't silently damage data:
+
+- **Type conversion:** `to_boolean`, `to_datetime_columns`, `to_category`, and `convert_types` to run them together. Also available as an optional first step in `clean(types=True)`.
+  - Yes/No conversion ignores case and only converts columns where every value is a yes/no word; anything else is left alone (or raises, when you name the column).
+  - Date conversion only touches text that looks like dates. Number columns are never converted (the old version turned a "days" column of 3s and 5s into 1970 dates), and plain numbers in text such as "12" aren't read as dates.
+- **Charts:** `show_counts` (sorted bars with counts and shares; replaces pie and doughnut charts), `show_grouped_box` (a number across groups, sorted by median, with group sizes) and `show_scatter` (optional bubble sizes and trend line). Each returns the figure so it can be saved.
+- **`profile()`** now suggests converting yes/no text to True/False and date text to dates, and puts those steps first in `report.code()`. Yes/no text is no longer suggested for label-encoding.
+- `fill_missing(categorical="missing")` now adds "Missing" to category columns, and leaves gaps in True/False columns as missing rather than failing.
+
 ## 0.4.1
 
 Fixes found while connecting dstoolkit to the other portfolio projects:

@@ -116,3 +116,61 @@ def test_plots_handle_missing_values(plot, grades):
 def test_distribution_profile_has_four_panels(grades):
     toolkit.show_distribution_profile(grades)
     assert len(plt.gcf().axes) == 4
+
+
+# ---------- show_counts, show_grouped_box, show_scatter ----------
+
+def _bar_labels(fig):
+    ax = fig.axes[0]
+    return [t.get_text() for t in ax.get_yticklabels()]
+
+
+def test_show_counts_sorts_and_labels_missing():
+    s = pd.Series(["a", "b", "a", None, "a", "b", "c"], name="grade")
+    fig = toolkit.show_counts(s)
+    assert _bar_labels(fig) == ["(missing)", "c", "b", "a"]   # drawn bottom-up: largest at the top
+    texts = [t.get_text() for t in fig.axes[0].texts]
+    assert "3 (43%)" in texts
+    fig = toolkit.show_counts(s, include_missing=False)
+    assert "(missing)" not in _bar_labels(fig)
+
+
+def test_show_counts_groups_the_rest_as_other():
+    s = pd.Series(list("aaaabbbcc") + list("defg"), name="x")
+    fig = toolkit.show_counts(s, top=2)
+    assert _bar_labels(fig)[0] == "Other (5 values)"
+    s_missing = pd.Series(list("aaaab") + [None] * 6, name="x")   # most common, but still drawn last
+    assert _bar_labels(toolkit.show_counts(s_missing))[0] == "(missing)"
+
+
+def test_show_grouped_box_orders_by_median_and_shows_group_sizes():
+    df = pd.DataFrame({"los": [1, 2, 3, 10, 11, 12, 5, 6], "hospital": list("AAABBBCC")})
+    fig = toolkit.show_grouped_box(df, "los", by="hospital")
+    assert _bar_labels(fig) == ["A (n=3)", "C (n=2)", "B (n=3)"]   # highest median at the top
+
+
+def test_show_grouped_box_limits_groups_and_checks_types():
+    df = pd.DataFrame({"v": range(30), "g": [f"g{i % 10}" for i in range(30)]})
+    fig = toolkit.show_grouped_box(df, "v", by="g", max_groups=4)
+    assert len(_bar_labels(fig)) == 4
+    assert any("4 largest of 10" in t.get_text() for t in fig.axes[0].texts)
+    with pytest.raises(TypeError):
+        toolkit.show_grouped_box(df, "g", by="v")
+    with pytest.raises(KeyError):
+        toolkit.show_grouped_box(df, "missing", by="g")
+
+
+def test_show_scatter_bubbles_trend_and_missing_rows():
+    x = pd.Series([1, 2, 3, 4, np.nan], name="hours")
+    y = pd.Series([2, 4, 6, 8, 10], name="score")
+    size = pd.Series([1, 2, 3, 4, 5], name="weight")
+    fig = toolkit.show_scatter(x, y, size=size, trend=True)
+    ax = fig.axes[0]
+    assert len(ax.collections[0].get_offsets()) == 4             # the row missing x is left out
+    assert ax.get_legend().get_texts()[0].get_text() == "y = 2x + 0"
+    assert "bubble size: weight" in ax.get_title()
+
+
+def test_show_scatter_with_no_complete_rows_raises():
+    with pytest.raises(ValueError):
+        toolkit.show_scatter(pd.Series([np.nan]), pd.Series([1.0]))

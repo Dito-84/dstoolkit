@@ -55,6 +55,10 @@ Each cleaning step prints a one-line summary of what it changed; pass `verbose=F
 
 | Function | What it does |
 |---|---|
+| `to_boolean(df, columns)` | Yes/No text (any case, also Y/N, True/False) to True/False; blanks and "N/A" become missing. Columns with any other value are left alone |
+| `to_datetime_columns(df, columns, min_share)` | Date text (2020-01-31, 01/31/2020, ...) to real dates. Number columns are never turned into dates |
+| `to_category(df, columns, max_unique)` | Repeated text labels (hospital, region) to pandas' category type |
+| `convert_types(df)` | Runs the three type conversions above with safe defaults (categories optional) |
 | `remove_duplicates(df, subset, keep)` | Drops duplicate rows, optionally judged on a subset of columns |
 | `fill_missing(df, numeric, categorical, columns)` | Fills gaps: mean, median, zero or k-nearest-neighbours for numbers; most frequent value or "Missing" for text |
 | `find_outliers(df, columns, method)` | True/False table of outliers by IQR or z-score |
@@ -64,7 +68,7 @@ Each cleaning step prints a one-line summary of what it changed; pass `verbose=F
 | `encode_categorical(df, columns)` | One-hot or label encoding per column; label codes keep missing values missing |
 | `normalize(df, columns)` | Min-max (0–1) or z-score scaling per column |
 | `add_age_column(df, dob_column, as_of)` | Age in completed years from a birth-date column, as of today or another date column |
-| `clean(df, ...)` | Runs duplicates → missing values → outliers → encoding → scaling in one call |
+| `clean(df, ...)` | Runs types (optional) → duplicates → missing values → outliers → encoding → scaling in one call |
 
 ## Profiling: `dstoolkit.profiling`
 
@@ -86,6 +90,9 @@ Each cleaning step prints a one-line summary of what it changed; pass `verbose=F
 | `show_distribution(series)` | Histogram stacked above a boxplot |
 | `show_density(series)` | Density curve with mean and median lines |
 | `show_distribution_profile(series)` | 2×2 overview: histogram, density, boxplot, summary table |
+| `show_counts(series, top)` | Sorted bar chart of how often each value appears, with counts and shares; rare values grouped as "Other" |
+| `show_grouped_box(df, value, by)` | A number compared across groups (e.g. length of stay by hospital), sorted by median, with group sizes |
+| `show_scatter(x, y, size, trend)` | Scatterplot, optionally with bubble sizes and a fitted trend line |
 | `fit_line(x, y)` | Least-squares line; returns slope, intercept and a `predict` function |
 | `drop_nulls(data)` | Copy of a Series/DataFrame with null rows removed |
 | `add_passed(df, grade_col, threshold)` | Adds a True/False column for values at or above a threshold |
