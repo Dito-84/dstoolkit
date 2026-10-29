@@ -8,12 +8,13 @@ Everything is available from the top level:
     df = dst.clean(df, missing={"numeric": "median"})
     dst.show_distribution_profile(df["age"])
     dst.profile(df).save("report.html")
+    dst.validate(df, {"age": {"min": 0, "max": 120}})
 
-or from its module: `dstoolkit.cleaning`, `dstoolkit.exploration` and
-`dstoolkit.profiling`.
+or from its module: `dstoolkit.cleaning`, `dstoolkit.exploration`,
+`dstoolkit.profiling` and `dstoolkit.validation`.
 """
 
-from . import cleaning, exploration, profiling
+from . import cleaning, exploration, profiling, validation
 from .cleaning import (
     add_age_column,
     clean,
@@ -31,6 +32,7 @@ from .cleaning import (
     winsorize,
 )
 from .profiling import ColumnProfile, Profile, Suggestion, profile
+from .validation import ColumnRule, RuleResult, ValidationError, ValidationReport, validate
 from .exploration import (
     add_passed,
     drop_nulls,
@@ -48,5 +50,5 @@ from .exploration import (
 
 __version__ = "0.5.0"
 
-__all__ = ["cleaning", "exploration", "profiling", "__version__",
-           *cleaning.__all__, *exploration.__all__, *profiling.__all__]
+__all__ = ["cleaning", "exploration", "profiling", "validation", "__version__",
+           *cleaning.__all__, *exploration.__all__, *profiling.__all__, *validation.__all__]
