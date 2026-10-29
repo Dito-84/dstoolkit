@@ -8,7 +8,7 @@ def test_version_is_set():
 
 
 def test_every_public_function_is_available_at_top_level():
-    for module in (dst.cleaning, dst.exploration):
+    for module in (dst.cleaning, dst.exploration, dst.profiling, dst.validation):
         for name in module.__all__:
             assert getattr(dst, name) is getattr(module, name), name
 
