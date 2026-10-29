@@ -221,3 +221,48 @@ def test_identifier_digits_are_not_converted(name, values):
     df = pd.DataFrame({name: values})
     actions = {s.action for s in dst.profile(df, charts=False).suggestions}
     assert "to_numeric" not in actions
+
+
+# ---------- validation section (dst.validate, issue #9) ----------
+
+def test_profile_without_rules_has_no_validation_section(messy):
+    report = dst.profile(messy, charts=False)
+    assert report.validation is None
+    assert "<h2>Validation</h2>" not in report.to_html()
+    assert "Rules failed" not in report.to_html()
+
+
+def test_profile_with_rules_adds_validation(messy):
+    report = dst.profile(messy, charts=False,
+                         rules={"age": {"min": 0, "max": 60}, "id": {"unique": True, "pattern": r"P\d{4}"}},
+                         checks={"visits within plan": ("visits", "<=", "age")})
+    v = report.validation
+    assert isinstance(v, dst.ValidationReport)
+    assert not v.ok
+    page = report.to_html()
+    assert "<h2>Validation</h2>" in page
+    assert "Rules failed" in page and f"{len(v.failed_rules)} of {len(v.results)}" in page
+    assert "visits within plan (check)" in page
+    # failed rules come first, and the age card notes its failed rule
+    assert page.index("failed</span>") < page.index("passed</span>")
+    assert "Failed rule: max (≤ 60)" in page
+    # validation doesn't add cleaning suggestions
+    assert len(report.suggestions) == len(dst.profile(messy, charts=False).suggestions)
+
+
+def test_profile_validation_is_escaped():
+    df = pd.DataFrame({"<b>x</b>": ["<script>alert(1)</script>", "ok"]})
+    page = dst.profile(df, charts=False, rules={"<b>x</b>": {"allowed": ["ok"]}}).to_html()
+    assert "<script>alert(1)</script>" not in page
+    assert "&lt;script&gt;" in page
+
+
+def test_profile_rule_mistakes_raise(messy):
+    with pytest.raises(ValueError, match="did you mean 'required'"):
+        dst.profile(messy, charts=False, rules={"age": {"requird": True}})
+
+
+def test_profile_with_rules_does_not_modify_input(messy):
+    before = messy.copy()
+    dst.profile(messy, charts=False, rules={"age": {"min": 0}}, checks={"c": ("visits", "<=", "age")})
+    pd.testing.assert_frame_equal(messy, before)

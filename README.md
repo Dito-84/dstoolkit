@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Dito-84/Data_Science_Toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/Dito-84/Data_Science_Toolkit/actions/workflows/ci.yml)
 
-**Data Science Toolkit**: a small, typed Python package for the first stages of a data project. It **profiles** a pandas DataFrame and suggests how to clean it, **cleans** it (duplicates, missing values, outliers, encoding, scaling) and **explores** it (summary statistics, distribution plots, line fits). Every function returns a new DataFrame, so your raw data is never changed, and every function copes with missing values on its own.
+**Data Science Toolkit**: a small, typed Python package for the first stages of a data project. It **profiles** a pandas DataFrame and suggests how to clean it, **cleans** it (duplicates, missing values, outliers, encoding, scaling), **validates** it against rules you write, and **explores** it (summary statistics, distribution plots, line fits). Every function returns a new DataFrame, so your raw data is never changed, and every function copes with missing values on its own.
 
 ## Install
 
@@ -51,6 +51,41 @@ dst.show_distribution_profile(df["age"], title="Passenger Age")
 
 Each cleaning step prints a one-line summary of what it changed; pass `verbose=False` to silence it.
 
+## Validate against your own rules
+
+```python
+rules = {
+    "age": {"type": "number", "min": 0, "max": 100, "required": True},
+    "sex": {"allowed": ["male", "female"]},
+    "fare": {"min": 0.01},
+    "ticket": {"required": True},
+}
+check = dst.validate(raw, rules)
+# Validated 1,309 rows against 7 rule(s): 2 failed (271 row(s)).
+#   age: required (no blanks) failed for 263 row(s), e.g. row 15 = missing; row 37 = missing; row 40 = missing
+#   fare: min (≥ 0.01) failed for 17 row(s), e.g. row 7 = 0; row 70 = 0; row 125 = 0
+
+check.ok                       # False
+check.summary()                # one row per rule: checked, failed, examples
+check.failures()               # every failing value, with the reason
+raw.loc[check.failing_index]   # the rows themselves
+dst.validate(dst.clean(raw), rules).raise_if_failed()   # stop a pipeline on bad data
+```
+
+`checks` compare two columns in each row, with `==`, `!=`, `<`, `<=`, `>` or `>=`:
+
+```python
+dst.validate(stays, checks={
+    "discharged on or after admission": ("discharge_date", ">=", "admission_date"),
+})
+# Validated 2 rows against 1 rule(s): 1 failed (1 row(s)).
+#   discharged on or after admission: (discharge_date >= admission_date) failed for 1 row(s), e.g. row 1 = 2024-01-30 vs 2024-02-01
+```
+
+`validate()` reports problems; it never changes or converts the data. The text "12" is not a number, 1 is not True, and date text is not read as a date. Missing values are skipped by every rule except `required`, a column that doesn't exist is reported (with the closest name), and a mistake in the rules themselves raises before any data is read. Pass the same `rules=` and `checks=` to `profile()` to add a Validation section to the report.
+
+Why not pandera or Great Expectations? They're the right tools for enforcing data contracts in production pipelines. `validate()` is for the exploration stage: it reports every failing row with examples instead of stopping at the first error, uses the same no-guessing rules as the rest of the toolkit, shows up in the same HTML report as the profile, and adds no dependencies. The rule format is experimental until 1.0.
+
 ## Cleaning: `dstoolkit.cleaning`
 
 | Function | What it does |
@@ -74,11 +109,30 @@ Each cleaning step prints a one-line summary of what it changed; pass `verbose=F
 
 | Function / method | What it does |
 |---|---|
-| `profile(df, title, charts, missing_ok)` | Builds the report; `missing_ok` names columns where blank is meaningful (no fill/drop advice) |
+| `profile(df, title, charts, max_categories, missing_ok, rules, checks)` | Builds the report; `missing_ok` names columns where blank is meaningful (no fill/drop advice); `rules`/`checks` add a Validation section |
 | `report.save(path)` / `report.to_html()` | Self-contained HTML file or string |
 | `report.summary()` | One row per column: type, missing, unique values, outliers |
 | `report.suggestions` | The suggested steps as data (column, severity, message) |
 | `report.code(df_name)` | The suggested steps as runnable code, one call per kind of step |
+| `report.validation` | The `ValidationReport` when `rules` or `checks` were given, otherwise `None` |
+
+## Validation: `dstoolkit.validation`
+
+| Function / method | What it does |
+|---|---|
+| `validate(df, rules, checks, max_examples)` | Checks the data against rules and reports every problem, without changing it |
+| rule `type` | `"number"`, `"integer"`, `"text"`, `"boolean"`, `"datetime"` or `"category"`; values are not converted first |
+| rule `required` | No blanks: missing values or empty text ("N/A" counts as a value) |
+| rules `min`, `max` | Lowest / highest value: numbers, or dates (written as `"2020-01-01"`) for date columns |
+| rule `allowed` | The only values permitted; exact match, with a hint when only case or spaces differ |
+| rule `unique` | No value appears more than once (blanks aren't counted) |
+| rule `pattern` | Regular expression the whole value must match (Python's `re` on every pandas version) |
+| `checks={name: (col, op, col)}` | Compares two columns in each row with `==`, `!=`, `<`, `<=`, `>`, `>=`; rows with a blank side are skipped |
+| `report.ok` | True when every rule passed |
+| `report.summary()` | One row per rule: expected, checked, failed, failed %, examples |
+| `report.failures(column, rule)` | Every failing value: row label, column, rule, value and reason |
+| `report.failing_index` | Labels of rows that failed any rule, for `df.loc[...]` |
+| `report.raise_if_failed()` | Raises `ValidationError` (a `ValueError`) if any rule failed |
 
 ## Exploration: `dstoolkit.exploration`
 
@@ -105,7 +159,7 @@ Worked examples on real data:
 
 | Notebook | Covers |
 |---|---|
-| [`Profile_Titanic`](notebooks/Profile_Titanic.ipynb) | Profile the raw data, apply the suggested code, profile again, and read what's left |
+| [`Profile_Titanic`](notebooks/Profile_Titanic.ipynb) | Profile the raw data, apply the suggested code, profile again, read what's left, and validate both against rules |
 | [`Preprocessing_Titanic`](notebooks/Preprocessing_Titanic.ipynb) | Every cleaning step on the Titanic passenger list, then the same steps in one `clean()` call |
 | [`Toolkit_on_Titanic_Data`](notebooks/Toolkit_on_Titanic_Data.ipynb) | The exploration functions on real data: missing ages, heavily skewed fares, fare by class |
 
@@ -118,6 +172,7 @@ src/dstoolkit/
     __init__.py       top-level API and version
     cleaning.py       duplicates, missing values, outliers, encoding, scaling, age
     profiling.py      profile() report and cleaning suggestions
+    validation.py     validate() rules and checks
     exploration.py    summaries, distribution plots, line fits
     py.typed          marks the package as typed
 tests/                pytest suite
@@ -133,7 +188,7 @@ data/                 StudentData.csv, titanic3.csv
 git clone https://github.com/Dito-84/Data_Science_Toolkit
 cd Data_Science_Toolkit
 pip install -e ".[dev]"
-pytest    # 67 tests
+pytest    # the test suite
 mypy      # type check
 ```
 
