@@ -16,7 +16,7 @@ import dstoolkit as dst
 TEXT_DTYPES = ["object", "string"]
 
 
-def run(df, rules, **kwargs):
+def run(df, rules=None, **kwargs):
     return dst.validate(df, rules, verbose=False, **kwargs)
 
 
@@ -85,6 +85,7 @@ def test_required_flags_missing_values_and_empty_text_but_not_na_words():
     out = report.failures()
     assert out["row"].tolist() == [1, 2, 3]
     assert out["reason"].tolist() == ["missing", "empty text", "empty text"]
+    assert report.summary()["examples"][0].startswith("row 1 = missing; row 2 = ''")
     # "N/A" is a value someone typed; validate doesn't guess it means blank
     assert 4 not in out["row"].tolist()
 
@@ -438,7 +439,7 @@ def test_prints_one_line_plus_one_per_failed_rule(capsys):
     df = pd.DataFrame({"a": [-1, 2, -3], "b": ["x", "y", "z"]})
     dst.validate(df, {"a": {"min": 0}, "b": {"required": True}})
     lines = capsys.readouterr().out.strip().splitlines()
-    assert lines[0] == "Validated 3 rows against 2 rule(s): 1 failed (2 rows)."
+    assert lines[0] == "Validated 3 rows against 2 rule(s): 1 failed (2 row(s))."
     assert lines[1] == "  a: min (≥ 0) failed for 2 row(s), e.g. row 0 = -1; row 2 = -3"
     assert len(lines) == 2
 
@@ -491,3 +492,158 @@ def test_large_dataframe_counts_are_exact():
     assert s.loc["type", "failed"] == 0
     assert s.loc["max", "examples"].count("row") == 5
     assert len(report.failing_index) == 2000
+
+
+# ---------- checks: comparing two columns (stage B) ----------
+
+@pytest.fixture
+def stays():
+    return pd.DataFrame({
+        "admitted": pd.to_datetime(["2024-01-05", "2024-01-05", None, "2024-02-01", "2024-03-01"]),
+        "discharged": pd.to_datetime(["2024-01-07", "2024-01-03", "2024-01-09", "2024-02-01", None]),
+        "planned_days": [2, 3, 4, 0, 1],
+        "actual_days": [2, -2, 4.0, 0, 5],
+    })
+
+
+def test_check_reports_rows_where_the_comparison_is_false(stays):
+    report = run(stays, checks={"discharged on or after admission": ("discharged", ">=", "admitted")})
+    assert not report.ok
+    out = report.failures()
+    assert out["row"].tolist() == [1]
+    assert out["reason"][0] == "2024-01-03 >= 2024-01-05 is false"
+    s = report.summary().iloc[0]
+    assert (s["column"], s["rule"], s["expected"]) == ("discharged on or after admission", "compare",
+                                                      "discharged >= admitted")
+
+
+def test_check_skips_rows_where_either_side_is_missing(stays):
+    report = run(stays, checks={"order": ("discharged", ">=", "admitted")})
+    assert report.summary()["checked"][0] == 3       # rows 2 and 4 have a blank side
+
+
+@pytest.mark.parametrize("op, failing_rows", [
+    ("==", [1, 4]), ("!=", [0, 2, 3]), ("<", [0, 1, 2, 3]),
+    ("<=", [1]), (">", [0, 2, 3, 4]), (">=", [4]),
+])
+def test_every_operator_on_numbers(stays, op, failing_rows):
+    # planned vs actual: 2/2, 3/-2, 4/4.0, 0/0, 1/5
+    report = run(stays, checks={"days": ("planned_days", op, "actual_days")})
+    assert failing(report, "days", "compare") == failing_rows
+
+
+def test_checks_and_rules_together(stays):
+    report = run(stays, {"planned_days": {"min": 0}, "actual_days": {"min": 0}},
+                 checks={"order": ("discharged", ">=", "admitted")})
+    assert report.summary()["rule"].tolist() == ["min", "min", "compare"]
+    assert report.failing_index.tolist() == [1]
+
+
+def test_failures_can_be_filtered_by_a_column_in_a_check(stays):
+    report = run(stays, checks={"order": ("discharged", ">=", "admitted")})
+    assert len(report.failures(column="admitted")) == 1
+    assert len(report.failures(column="order")) == 1
+    assert len(report.failures(rule="compare")) == 1
+
+
+def test_check_values_are_both_sides(stays):
+    report = run(stays, checks={"order": ("discharged", ">=", "admitted")})
+    assert report.failures()["value"][0] == (pd.Timestamp("2024-01-03"), pd.Timestamp("2024-01-05"))
+    assert "row 1 = 2024-01-03 vs 2024-01-05" in report.summary()["examples"][0]
+
+
+def test_check_equality_keeps_true_apart_from_1():
+    df = pd.DataFrame({"a": pd.Series([True, 1, "x"], dtype=object), "b": pd.Series([1, 1, "x"], dtype=object)})
+    report = run(df, checks={"same": ("a", "==", "b")})
+    assert failing(report, "same", "compare") == [0]
+
+
+def test_check_equality_on_text(stays):
+    df = pd.DataFrame({"a": pd.Series(["x", "y"], dtype="string"), "b": pd.Series(["x", "z"], dtype="string")})
+    assert failing(run(df, checks={"same": ("a", "==", "b")}), "same", "compare") == [1]
+
+
+def test_check_on_mixed_columns_fails_rows_that_cant_be_compared():
+    df = pd.DataFrame({"a": pd.Series([1, "x", 5], dtype=object), "b": [2, 2, 2]})
+    out = run(df, checks={"a below b": ("a", "<", "b")}).failures()
+    assert out["row"].tolist() == [1, 2]
+    assert out["reason"].tolist() == ["can't compare text with a number", "5 < 2 is false"]
+
+
+def test_check_on_object_dates():
+    df = pd.DataFrame({"a": pd.Series([pd.Timestamp("2024-01-02"), "soon"], dtype=object),
+                       "b": pd.to_datetime(["2024-01-01", "2024-01-01"])})
+    out = run(df, checks={"a after b": ("a", ">", "b")}).failures()
+    assert out["row"].tolist() == [1]
+    assert out["reason"][0] == "can't compare text with a date"
+
+
+@pytest.mark.parametrize("a, b, op, match", [
+    ([1, 2], pd.to_datetime(["2024-01-01", "2024-01-02"]), "==", "can't be compared"),
+    (["x", "y"], ["x", "z"], "<", "numbers or dates"),
+    ([True, False], [True, True], ">", "numbers or dates"),
+])
+def test_check_on_columns_that_cant_be_compared_is_a_rule_mistake(a, b, op, match):
+    df = pd.DataFrame({"a": pd.Series(a, dtype="string" if isinstance(a[0], str) else None), "b": b})
+    with pytest.raises(TypeError, match=match):
+        run(df, checks={"c": ("a", op, "b")})
+
+
+def test_check_time_zone_mismatch_is_a_rule_mistake():
+    df = pd.DataFrame({"a": pd.to_datetime(["2024-01-01"]).tz_localize("UTC"),
+                       "b": pd.to_datetime(["2024-01-01"])})
+    with pytest.raises(TypeError, match="time zone"):
+        run(df, checks={"c": ("a", ">=", "b")})
+
+
+def test_check_with_missing_column_is_reported(stays):
+    report = run(stays, checks={"order": ("discharged", ">=", "admited")})
+    assert not report.ok
+    assert report.summary()["examples"][0] == "column 'admited' not found; did you mean 'admitted'?"
+
+
+@pytest.mark.parametrize("checks, error, match", [
+    ({"c": ("a", "=>", "b")}, ValueError, "operator must be one of"),
+    ({"c": ("a", ">=")}, TypeError, "must be \\(column, operator, column\\)"),
+    ({"c": ["a", ">=", "b"]}, TypeError, "must be \\(column, operator, column\\)"),
+    ({"c": lambda d: d["a"] > 0}, TypeError, "functions aren't supported yet"),
+    ({"": ("a", ">=", "b")}, TypeError, "needs a name"),
+    (("a", ">=", "b"), TypeError, "dict of"),
+])
+def test_check_mistakes_raise(checks, error, match):
+    with pytest.raises(error, match=match):
+        run(pd.DataFrame({"a": [1], "b": [2]}), checks=checks)
+
+
+def test_needs_rules_or_checks():
+    with pytest.raises(ValueError, match="rules, checks or both"):
+        dst.validate(pd.DataFrame({"a": [1]}))
+
+
+def test_check_with_duplicate_column_names_raises():
+    df = pd.DataFrame([[1, 2, 3]], columns=["a", "a", "b"])
+    with pytest.raises(ValueError, match="more than once"):
+        run(df, checks={"c": ("a", "<", "b")})
+
+
+def test_checks_do_not_modify_input(stays):
+    before = stays.copy()
+    run(stays, checks={"order": ("discharged", ">=", "admitted"), "days": ("planned_days", "==", "actual_days")})
+    pd.testing.assert_frame_equal(stays, before)
+
+
+def test_check_is_printed_by_name(stays, capsys):
+    dst.validate(stays, checks={"discharged on or after admission": ("discharged", ">=", "admitted")})
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert lines[1] == ("  discharged on or after admission: (discharged >= admitted) failed for 1 row(s), "
+                        "e.g. row 1 = 2024-01-03 vs 2024-01-05")
+
+
+def test_large_check_counts_are_exact():
+    n = 1_000_000
+    start = pd.Timestamp("2024-01-01") + pd.to_timedelta(np.arange(n) % 365, unit="D")
+    end = start + pd.Timedelta(days=3)
+    end = end.where(np.arange(n) % 1000 != 0, start - pd.Timedelta(days=1))   # 1,000 bad rows
+    df = pd.DataFrame({"start": start, "end": end})
+    report = run(df, checks={"order": ("end", ">=", "start")})
+    assert report.summary()["failed"][0] == 1000

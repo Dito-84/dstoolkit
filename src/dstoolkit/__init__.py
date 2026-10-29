@@ -32,7 +32,7 @@ from .cleaning import (
     winsorize,
 )
 from .profiling import ColumnProfile, Profile, Suggestion, profile
-from .validation import ColumnRule, RuleResult, ValidationError, ValidationReport, validate
+from .validation import ColumnRule, Comparison, RuleResult, ValidationError, ValidationReport, validate
 from .exploration import (
     add_passed,
     drop_nulls,
@@ -48,7 +48,7 @@ from .exploration import (
     show_scatter,
 )
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __all__ = ["cleaning", "exploration", "profiling", "validation", "__version__",
            *cleaning.__all__, *exploration.__all__, *profiling.__all__, *validation.__all__]

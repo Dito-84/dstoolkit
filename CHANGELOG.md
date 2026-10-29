@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.0
+
+- **`dst.validate(df, rules, checks)`**: checks data against rules you write and reports every problem, without changing the data. Rules per column: `type`, `required`, `min`/`max`, `allowed`, `unique` and `pattern`. `checks` compare two columns in each row, e.g. `("discharge_date", ">=", "admission_date")`. Returns a `ValidationReport` with `.ok`, `.summary()`, `.failures()`, `.failing_index` and `.raise_if_failed()`.
+  - Nothing is guessed or converted: the text "12" is not a number, 1 is not True (also in `allowed`, `unique` and `==` checks), and date text is not read as a date.
+  - Missing values are skipped by every rule except `required`, which also flags empty text (but not "N/A").
+  - A column that doesn't exist is reported as a failure with the closest name. Mistakes in the rules (a misspelled rule name, a bad regular expression, `allowed` given as text, `min` above `max`) raise before any data is read. `ColumnRule` is a `TypedDict`, so type checkers catch misspelled rule names too.
+  - `pattern` always uses Python's `re`, so a pattern means the same thing on pandas 2 and 3.
+  - The rule format is experimental until 1.0.
+- **`profile(rules=..., checks=...)`** adds a Validation section, a "Rules failed" tile and notes on each column's card. Without them the report is unchanged. Validation results are not turned into cleaning suggestions.
+- `clean()` is unchanged; to validate its output, use `dst.validate(dst.clean(df), rules)`.
+- The `Profile_Titanic` notebook validates the raw and cleaned data, and the example report in `docs/` includes the Validation section.
+
 ## 0.5.0
 
 New functions, rewritten from earlier sandbox versions so they can't silently damage data:

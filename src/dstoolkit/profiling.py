@@ -9,6 +9,10 @@ suggested cleaning code.
     report.suggestions          # the recommended cleaning steps as data
     print(report.code())        # ...or as ready-to-run dstoolkit code
 
+    # add a validation section: rules and checks as in dst.validate()
+    report = dst.profile(df, rules={"age": {"min": 0, "max": 120}})
+    report.validation.ok
+
 The report never changes the DataFrame it describes.
 """
 
@@ -18,7 +22,7 @@ import base64
 import html
 import io
 import re
-from collections.abc import Iterable
+from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -28,6 +32,7 @@ import pandas as pd
 from matplotlib.figure import Figure
 
 from .cleaning import DATE_PATTERN, DOB_NAME_HINTS, _bounds, _is_yes_no
+from .validation import ColumnRule, Comparison, ValidationReport, validate
 
 __all__ = ["profile", "Profile", "ColumnProfile", "Suggestion"]
 
@@ -95,7 +100,8 @@ class Profile:
 
     def __init__(self, title: str, n_rows: int, n_columns: int, duplicates: int, missing_cells: int,
                  memory_bytes: int, columns: list[ColumnProfile], correlations: pd.DataFrame | None,
-                 correlation_chart: str | None, suggestions: list[Suggestion]) -> None:
+                 correlation_chart: str | None, suggestions: list[Suggestion],
+                 validation: ValidationReport | None = None) -> None:
         self.title = title
         self.n_rows = n_rows
         self.n_columns = n_columns
@@ -106,6 +112,7 @@ class Profile:
         self.correlations = correlations
         self.correlation_chart = correlation_chart
         self.suggestions = suggestions
+        self.validation = validation
 
     # ----- data views -----
 
@@ -189,10 +196,16 @@ class Profile:
             ("Missing cells", f"{self.missing_cells:,} ({missing_pct:.1f}%)"),
             ("Memory", _human_bytes(self.memory_bytes)),
         ]
+        v = self.validation
+        if v is not None:
+            tiles.append(("Rules failed", f"{len(v.failed_rules)} of {len(v.results)}"))
         parts = [f'<div class="dst-profile"><h1>{e(self.title)}</h1>',
                  '<div class="dst-tiles">' + "".join(
                      f'<div class="dst-tile"><div class="dst-label">{e(k)}</div><div class="dst-value">{e(v)}</div></div>'
                      for k, v in tiles) + "</div>"]
+
+        if v is not None:
+            parts.append(_validation_html(v))
 
         # Suggestions
         parts.append("<h2>Suggested cleaning</h2>")
@@ -222,6 +235,10 @@ class Profile:
             stats = "".join(f"<tr><th>{e(k)}</th><td>{e(_fmt(v))}</td></tr>" for k, v in c.stats.items())
             notes = [s for s in self.suggestions if s.column == c.name]
             note_html = "".join(f'<li class="dst-{s.severity}">{e(s.message)}</li>' for s in notes)
+            if v is not None:
+                note_html = "".join(
+                    f'<li class="dst-high">Failed rule: {e(_rule_label(r))} ({r.failed:,} row(s))</li>'
+                    for r in v.failed_rules if c.name in r.columns and not r.note) + note_html
             img = (f'<img alt="Distribution of {e(c.name)}" src="data:image/png;base64,{c.chart}">'
                    if c.chart else "")
             parts.append(
@@ -272,7 +289,9 @@ class Profile:
 # ---------- building the profile ----------
 
 def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = True,
-            max_categories: int = 10, missing_ok: Iterable[str] = ()) -> Profile:
+            max_categories: int = 10, missing_ok: Iterable[str] = (),
+            rules: Mapping[Hashable, ColumnRule] | None = None,
+            checks: Mapping[str, Comparison] | None = None) -> Profile:
     """Profile a DataFrame: overview, per-column statistics, correlations and
     suggested cleaning steps.
 
@@ -280,12 +299,17 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
     max_categories: how many of the most common values to show per text column
     missing_ok: columns where a blank means something (e.g. "no complication",
                 "not readmitted"), so they get no suggestions to fill or drop them
+    rules, checks: validation rules, as in `dst.validate()`; when given, the
+                   report gets a Validation section and `report.validation`
     """
     if df.shape[1] == 0:
         raise ValueError("DataFrame has no columns")
     if df.columns.duplicated().any():
         dupes = df.columns[df.columns.duplicated()].tolist()
         raise ValueError(f"Column name(s) {dupes} appear more than once; rename duplicates first")
+
+    validation = (validate(df, rules, checks, verbose=False)
+                  if rules is not None or checks is not None else None)
 
     expected = {str(c) for c in missing_ok}
     unknown = sorted(expected - {str(c) for c in df.columns})
@@ -324,7 +348,30 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
     return Profile(title=title, n_rows=len(df), n_columns=df.shape[1], duplicates=duplicates,
                    missing_cells=int(df.isna().sum().sum()),
                    memory_bytes=int(df.memory_usage(deep=True).sum()), columns=columns,
-                   correlations=correlations, correlation_chart=corr_chart, suggestions=suggestions)
+                   correlations=correlations, correlation_chart=corr_chart, suggestions=suggestions,
+                   validation=validation)
+
+
+def _rule_label(r: Any) -> str:
+    return f"{r.column}: {r.expected}" if r.rule == "compare" else f"{r.rule} ({r.expected})"
+
+
+def _validation_html(v: ValidationReport) -> str:
+    e = html.escape
+    headline = v.message().splitlines()[0]
+    rows = []
+    for r in sorted(v.results, key=lambda r: r.passed):
+        status = '<span class="dst-pass">passed</span>' if r.passed else '<span class="dst-fail">failed</span>'
+        name = r.column if r.rule != "compare" else f"{r.column} (check)"
+        detail = r.note or v._examples(r, v.max_examples)
+        rows.append(f"<tr><td>{status}</td><td>{e(name)}</td><td>{e(r.rule)}</td><td>{e(r.expected)}</td>"
+                    f"<td>{r.failed:,} of {r.checked:,}</td><td>{e(detail)}</td></tr>")
+    return ("<h2>Validation</h2>"
+            f'<p class="dst-note">{e(headline)} Failed rules come first; '
+            "<code>report.validation.failures()</code> lists every failing value.</p>"
+            '<div class="dst-scroll"><table class="dst-table"><thead><tr><th>Result</th><th>Column</th>'
+            "<th>Rule</th><th>Expected</th><th>Failed</th><th>Examples</th></tr></thead><tbody>"
+            + "".join(rows) + "</tbody></table></div>")
 
 
 def _kind(series: pd.Series) -> Kind:
@@ -644,6 +691,8 @@ li.dst-low { background:var(--low-bg); color:var(--low); }
 .dst-profile code, .dst-code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12.5px; }
 .dst-code { background:var(--code); border:1px solid var(--line); border-radius:8px; padding:12px; overflow-x:auto;
   white-space:pre; color:var(--ink); }
+.dst-pass { color:var(--low); font-weight:600; }
+.dst-fail { color:var(--high); font-weight:700; }
 .dst-note, .dst-footer { color:var(--muted); font-size:13px; }
 .dst-scroll { overflow-x:auto; }
 .dst-table { border-collapse:collapse; width:100%; background:var(--panel); font-variant-numeric:tabular-nums; }

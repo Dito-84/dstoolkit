@@ -15,6 +15,11 @@ rule, with examples, and decide what to do about it.
     report.failures()         # one row per failing value, with the reason
     report.raise_if_failed()  # stop here if anything failed
 
+    # rules that compare two columns, row by row
+    dst.validate(df, checks={
+        "discharged on or after admission": ("discharge_date", ">=", "admission_date"),
+    })
+
     # validate what clean() produced
     dst.validate(dst.clean(df), rules).raise_if_failed()
 
@@ -27,8 +32,12 @@ Rules per column (use any combination):
     unique    True: no value appears more than once
     pattern   regular expression the whole value must match
 
-Missing values are skipped by every rule except `required`. Values are never
-converted before checking: the text "12" is not a number, and 1 is not True.
+Checks compare two columns with ==, !=, <, <=, > or >=. Order comparisons
+(<, <=, >, >=) need numbers or dates on both sides.
+
+Missing values are skipped by every rule except `required` (and a check skips
+rows where either side is missing). Values are never converted before
+checking: the text "12" is not a number, and 1 is not True.
 
 The rule format is experimental until dstoolkit 1.0 and may change.
 """
@@ -38,6 +47,7 @@ from __future__ import annotations
 import datetime as dt
 import difflib
 import html
+import operator
 import re
 from collections import Counter
 from collections.abc import Callable, Hashable, Mapping, Sequence
@@ -47,7 +57,7 @@ from typing import Any, Literal, TypedDict
 import numpy as np
 import pandas as pd
 
-__all__ = ["validate", "ValidationReport", "RuleResult", "ColumnRule", "ValidationError"]
+__all__ = ["validate", "ValidationReport", "RuleResult", "ColumnRule", "Comparison", "ValidationError"]
 
 TypeName = Literal["number", "integer", "text", "boolean", "datetime", "category"]
 TYPE_NAMES: tuple[str, ...] = ("number", "integer", "text", "boolean", "datetime", "category")
@@ -64,6 +74,16 @@ class ColumnRule(TypedDict, total=False):
     pattern: str
 
 
+Operator = Literal["==", "!=", "<", "<=", ">", ">="]
+Comparison = tuple[Hashable, Operator, Hashable]
+"""A check comparing two columns row by row, e.g. ("discharge_date", ">=", "admission_date")."""
+
+OPERATORS: dict[str, Callable[[Any, Any], Any]] = {
+    "==": operator.eq, "!=": operator.ne, "<": operator.lt,
+    "<=": operator.le, ">": operator.gt, ">=": operator.ge,
+}
+ORDERING = frozenset({"<", "<=", ">", ">="})
+
 RULE_KEYS: tuple[str, ...] = ("type", "required", "min", "max", "allowed", "unique", "pattern")
 PRINTED_EXAMPLES = 3   # examples per failed rule in the printed summary
 
@@ -79,8 +99,8 @@ class ValidationError(ValueError):
 @dataclass(frozen=True)
 class RuleResult:
     """The outcome of one rule on one column."""
-    column: str
-    rule: str          # "type", "required", "min", "max", "allowed", "unique", "pattern" or "column"
+    column: str        # the column, or the check's name for a comparison
+    rule: str          # "type", "required", "min", "max", "allowed", "unique", "pattern", "column" or "compare"
     expected: str      # what the rule asks for, in words
     checked: int       # how many values were checked
     failed: int        # how many rows failed
@@ -88,6 +108,11 @@ class RuleResult:
     rows: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.intp), repr=False)
     values: list[Any] = field(default_factory=list, repr=False)
     reasons: list[str] = field(default_factory=list, repr=False)
+    columns: tuple[str, ...] = ()   # the data columns involved
+
+    def __post_init__(self) -> None:
+        if not self.columns:
+            object.__setattr__(self, "columns", (self.column,))
 
     @property
     def passed(self) -> bool:
@@ -134,12 +159,14 @@ class ValidationReport:
     def failures(self, column: str | None = None, rule: str | None = None) -> pd.DataFrame:
         """Every failing value: row label, column, rule, value and reason.
 
-        Filter with `column=` and/or `rule=`. Problems with a whole column (not
+        Filter with `column=` (a column, or a check's name) and/or `rule=`
+        ("compare" for checks). Problems with a whole column (not
         found, wrong storage type) are in `summary()`, not here.
         """
         frames = []
         for r in self.results:
-            if not r.rows.size or (column is not None and r.column != column) or (rule is not None and r.rule != rule):
+            if (not r.rows.size or (column is not None and column not in (r.column, *r.columns))
+                    or (rule is not None and r.rule != rule)):
                 continue
             frames.append(pd.DataFrame({
                 "row": self._index[r.rows], "column": r.column, "rule": r.rule,
@@ -163,12 +190,13 @@ class ValidationReport:
         head = f"Validated {self.n_rows:,} rows against {len(self.results)} rule(s): "
         if not failed:
             return head + "all passed."
-        lines = [head + f"{len(failed)} failed ({len(self.failing_index):,} rows)."]
+        lines = [head + f"{len(failed)} failed ({len(self.failing_index):,} row(s))."]
         for r in failed:
             if r.note:
                 lines.append(f"  {r.column}: {r.note}")
             else:
-                lines.append(f"  {r.column}: {r.rule} ({r.expected}) failed for {r.failed:,} row(s), "
+                what = f"({r.expected})" if r.rule == "compare" else f"{r.rule} ({r.expected})"
+                lines.append(f"  {r.column}: {what} failed for {r.failed:,} row(s), "
                              f"e.g. {self._examples(r, PRINTED_EXAMPLES)}")
         return "\n".join(lines)
 
@@ -184,11 +212,14 @@ class ValidationReport:
                 f"{len(self.failed_rules)} failed>")
 
 
-def validate(df: pd.DataFrame, rules: Mapping[Hashable, ColumnRule], max_examples: int = 5,
+def validate(df: pd.DataFrame, rules: Mapping[Hashable, ColumnRule] | None = None,
+             checks: Mapping[str, Comparison] | None = None, max_examples: int = 5,
              verbose: bool = True) -> ValidationReport:
-    """Check `df` against `rules` and report every problem. The data is not changed.
+    """Check `df` against `rules` and `checks` and report every problem. The data is not changed.
 
     rules: {column: {rule: value}}; see the module docstring for the rule names
+    checks: {name: (column, operator, column)}, comparing two columns in each row,
+            e.g. {"discharged on or after admission": ("discharge_date", ">=", "admission_date")}
     max_examples: example rows shown per rule in `summary()` (counts are always exact)
 
     A column that doesn't exist is reported as a failure (with the closest
@@ -200,22 +231,26 @@ def validate(df: pd.DataFrame, rules: Mapping[Hashable, ColumnRule], max_example
         raise TypeError(f"validate() needs a DataFrame, got {type(df).__name__}")
     if max_examples < 0:
         raise ValueError("max_examples can't be negative")
-    plans = _parse_rules(rules)
+    if rules is None and checks is None:
+        raise ValueError("Give rules, checks or both")
+    plans = _parse_rules(rules if rules is not None else {})
+    comparisons = _parse_checks(checks if checks is not None else {})
+    for column in [c for c, _ in plans] + [c for _, a, _, b in comparisons for c in (a, b)]:
+        if column in df.columns and (df.columns == column).sum() > 1:
+            raise ValueError(f"Column name {str(column)!r} appears more than once; rename duplicates first")
 
-    names = [str(c) for c in df.columns]
     results: list[RuleResult] = []
-    for column, checks in plans:
+    for column, column_checks in plans:
         label = str(column)
         if column not in df.columns:
-            close = difflib.get_close_matches(label, names, n=1)
-            hint = f"; did you mean {close[0]!r}?" if close else ""
-            results.append(RuleResult(label, "column", "column exists", 0, 0, note=f"column not found{hint}"))
+            results.append(RuleResult(label, "column", "column exists", 0, 0,
+                                      note=f"column not found{_did_you_mean(df, column)}"))
             continue
-        if (df.columns == column).sum() > 1:
-            raise ValueError(f"Column name {label!r} appears more than once; rename duplicates first")
         series = df[column]
-        for key, value in checks:
+        for key, value in column_checks:
             results.append(_run(series, label, key, value))
+    for name, left, op, right in comparisons:
+        results.append(_compare(df, name, left, op, right))
 
     report = ValidationReport(len(df), df.index, results, max_examples)
     if verbose:
@@ -295,6 +330,107 @@ def _bound(column: Hashable, key: str, value: Any) -> float | pd.Timestamp:
             raise ValueError(f"{column!r}: {key} can't be missing")
         return stamp
     raise TypeError(f"{column!r}: {key} must be a number or a date, got {value!r}")
+
+
+def _parse_checks(checks: Mapping[str, Comparison]) -> list[tuple[str, Hashable, str, Hashable]]:
+    if not isinstance(checks, Mapping):
+        raise TypeError("checks must be a dict of {name: (column, operator, column)}")
+    parsed = []
+    for name, check in checks.items():
+        if not isinstance(name, str) or not name.strip():
+            raise TypeError(f"Each check needs a name (text), got {name!r}")
+        if callable(check):
+            raise TypeError(f"Check {name!r}: functions aren't supported yet; use (column, operator, column), "
+                            "or add a True/False column and check it with {'allowed': [True]}")
+        if not isinstance(check, tuple) or len(check) != 3:
+            raise TypeError(f"Check {name!r} must be (column, operator, column), "
+                            f"e.g. ('discharge_date', '>=', 'admission_date')")
+        left, op, right = check
+        if op not in OPERATORS:
+            raise ValueError(f"Check {name!r}: operator must be one of {', '.join(OPERATORS)}, got {op!r}")
+        parsed.append((name, left, str(op), right))
+    return parsed
+
+
+def _stored(series: pd.Series) -> str:
+    """How a column is stored: number, date, bool, text, or mixed (checked value by value)."""
+    dtype = series.dtype
+    if pd.api.types.is_bool_dtype(dtype):
+        return "bool"
+    if pd.api.types.is_numeric_dtype(dtype):
+        return "number"
+    if pd.api.types.is_datetime64_any_dtype(dtype):
+        return "date"
+    if isinstance(dtype, pd.StringDtype):
+        return "text"
+    return "mixed"
+
+
+def _compare(df: pd.DataFrame, name: str, left: Hashable, op: str, right: Hashable) -> RuleResult:
+    expected = f"{left} {op} {right}"
+    involved = (str(left), str(right))
+    for column in (left, right):
+        if column not in df.columns:
+            return RuleResult(name, "compare", expected, 0, 0, columns=involved,
+                              note=f"column {str(column)!r} not found{_did_you_mean(df, column)}")
+    a, b = df[left], df[right]
+    kinds = {_stored(a), _stored(b)}
+    words = {"number": "numbers", "date": "dates", "bool": "True/False values", "text": "text"}
+    if op in ORDERING and kinds & {"bool", "text"}:
+        raise TypeError(f"Check {name!r}: {op} needs numbers or dates on both sides, but "
+                        f"{' and '.join(words[k] for k in sorted(kinds - {'mixed'}))} can't be ordered")
+    if "mixed" not in kinds and len(kinds) > 1:
+        raise TypeError(f"Check {name!r}: {left!r} holds {words[_stored(a)]} and {right!r} holds "
+                        f"{words[_stored(b)]}, which can't be compared")
+
+    both = np.flatnonzero((a.notna() & b.notna()).to_numpy(dtype=bool))
+    av = a.iloc[both].reset_index(drop=True)
+    bv = b.iloc[both].reset_index(drop=True)
+    compare = OPERATORS[op]
+
+    if "mixed" not in kinds:
+        try:
+            ok = np.asarray(compare(av, bv), dtype=bool)
+        except TypeError:
+            raise TypeError(f"Check {name!r}: the dates in {left!r} and {right!r} can't be compared; "
+                            "give both a time zone or neither") from None
+        failed = ~ok
+        pairs = list(zip(av[failed], bv[failed]))
+        reasons = [f"{_show(x)} {op} {_show(y)} is false" for x, y in pairs]
+    else:
+        found = [_compare_values(x, y, op) for x, y in zip(av, bv)]
+        failed = np.array([r is not None for r in found], dtype=bool)
+        reasons = [r for r in found if r is not None]
+        pairs = [(x, y) for (x, y), bad in zip(zip(av, bv), failed) if bad]
+    rows = both[failed]
+    values: list[Any] = [(_plain(x), _plain(y)) for x, y in pairs]
+    return RuleResult(name, "compare", expected, len(both), len(rows), rows=rows, values=values,
+                      reasons=reasons, columns=involved)
+
+
+def _compare_values(x: Any, y: Any, op: str) -> str | None:
+    """Why `x op y` fails for one row, or None when it holds."""
+    if op in ORDERING:
+        if _is_number(x) and _is_number(y):
+            holds = OPERATORS[op](x, y)
+        elif _is_date(x) and _is_date(y):
+            try:
+                holds = OPERATORS[op](pd.Timestamp(x), pd.Timestamp(y))
+            except TypeError:
+                return "can't compare dates with and without a time zone"
+        else:
+            return f"can't compare {_describe(x)} with {_describe(y)}"
+    else:
+        try:
+            holds = (_key(x) == _key(y)) == (op == "==")
+        except TypeError:
+            return f"can't compare {_describe(x)} with {_describe(y)}"
+    return None if holds else f"{_show(x)} {op} {_show(y)} is false"
+
+
+def _did_you_mean(df: pd.DataFrame, column: Hashable) -> str:
+    close = difflib.get_close_matches(str(column), [str(c) for c in df.columns], n=1)
+    return f"; did you mean {close[0]!r}?" if close else ""
 
 
 # ---------- running one rule ----------
@@ -588,6 +724,10 @@ def _plain(v: Any) -> Any:
 
 
 def _show(v: Any) -> str:
+    if isinstance(v, tuple):
+        return " vs ".join(_show(x) for x in v)
+    if v is None or (pd.api.types.is_scalar(v) and pd.isna(v)):
+        return "missing"
     v = _plain(v)
     if isinstance(v, float) and v.is_integer():
         return str(int(v))
