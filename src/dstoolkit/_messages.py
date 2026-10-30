@@ -59,8 +59,11 @@ def set_message_output(output: MessageOutput) -> None:
     if output not in ("print", "logging", "off"):
         raise ValueError(f'output must be "print", "logging" or "off", got {output!r}')
     _output = output
-    if _console in logger.handlers:
-        logger.removeHandler(_console)
+    # Remove every copy of the print handler, including one left by an earlier import of
+    # this module (importlib.reload or Jupyter's %autoreload), so messages never print twice
+    for handler in list(logger.handlers):
+        if type(handler).__name__ == "_StdoutHandler":
+            logger.removeHandler(handler)
     if output == "print":
         logger.addHandler(_console)
         logger.setLevel(logging.INFO)
@@ -84,5 +87,6 @@ def say(verbose: bool, message: str) -> None:
         logger.info(message)
 
 
-logger.addHandler(logging.NullHandler())   # standard library practice for packages
+if not any(isinstance(h, logging.NullHandler) for h in logger.handlers):
+    logger.addHandler(logging.NullHandler())   # standard library practice for packages
 set_message_output("print")

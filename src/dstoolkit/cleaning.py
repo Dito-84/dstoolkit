@@ -387,7 +387,7 @@ def _knn_fill(result: pd.DataFrame, targets: list[str], features: list[str],
         from sklearn.impute import KNNImputer
     except ImportError as err:
         raise ImportError("numeric='knn' needs scikit-learn, an optional extra: pip install scikit-learn, "
-                          "or install dstoolkit as dstoolkit[knn]") from err
+                          "or install dstoolkit as dstoolkit[sklearn]") from err
     used = [c for c in dict.fromkeys(features + targets) if result[c].notna().any()]
     empty = [c for c in targets if c not in used]
     values = result[used].astype(float)

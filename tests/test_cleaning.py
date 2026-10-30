@@ -10,7 +10,7 @@ try:
 except ImportError:
     HAS_SKLEARN = False
 # KNN filling needs the optional scikit-learn extra (installed by ".[dev]" and in CI)
-needs_sklearn = pytest.mark.skipif(not HAS_SKLEARN, reason="needs scikit-learn (the knn extra)")
+needs_sklearn = pytest.mark.skipif(not HAS_SKLEARN, reason="needs scikit-learn (the sklearn extra)")
 
 
 @pytest.fixture
@@ -346,6 +346,6 @@ def test_knn_without_scikit_learn_says_what_to_install(monkeypatch):
     import sys
     monkeypatch.setitem(sys.modules, "sklearn.impute", None)
     df = pd.DataFrame({"a": [1.0, np.nan, 3.0], "b": [1.0, 2.0, 3.0]})
-    with pytest.raises(ImportError, match=r"dstoolkit\[knn\]"):
+    with pytest.raises(ImportError, match=r"dstoolkit\[sklearn\]"):
         pp.fill_missing(df, numeric="knn")
     pp.fill_missing(df, numeric="median", verbose=False)   # every other method works without it
