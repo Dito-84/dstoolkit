@@ -26,7 +26,7 @@ def test_remove_duplicates(df, capsys):
     out = pp.remove_duplicates(df)
     assert len(out) == 5
     assert "Removed 1 duplicate" in capsys.readouterr().out
-    assert list(out.index) == list(range(5))
+    assert list(out.index) == [0, 1, 3, 4, 5]   # kept rows keep their labels, so they trace back to the source
     unchanged(df, before)
 
 
@@ -241,3 +241,89 @@ def test_clean_pipeline(df):
 def test_clean_requires_columns_for_encode(df):
     with pytest.raises(ValueError, match="encode needs"):
         pp.clean(df, encode=True)
+
+
+# ---------- fixes in 0.7.0 ----------
+
+def test_clean_fills_nothing_unless_asked(df):
+    # 0.6.0 filled every numeric column (IDs included) with its mean by default
+    out = pp.clean(df, verbose=False)
+    assert out["age"].isna().sum() == 2
+    assert out["city"].isna().sum() == 2
+
+
+def test_fill_missing_leaves_date_gaps_alone(capsys):
+    # 0.6.0 wrote the text "Missing" into date columns (turning them into text),
+    # and filled them with the most common date
+    df = pd.DataFrame({"n": [1, 2, 3], "when": pd.to_datetime(["2020-01-01", None, "2020-01-01"])})
+    for method in ("missing", "most_frequent"):
+        out = pp.fill_missing(df, categorical=method)
+        assert pd.api.types.is_datetime64_any_dtype(out["when"])
+        assert out["when"].isna().sum() == 1
+        assert "Left gaps in date column(s) when" in capsys.readouterr().out
+
+
+def test_mean_fill_of_nullable_integers_switches_to_decimals(capsys):
+    # 0.6.0 raised "Invalid value '1.5' for dtype 'Int64'"
+    df = pd.DataFrame({"k": [1, 2, 3], "x": pd.array([1, 2, None], dtype="Int64")})
+    out = pp.fill_missing(df)
+    assert out["x"].tolist() == [1.0, 2.0, 1.5]
+    assert str(out["x"].dtype) == "Float64"
+    assert "as decimals" in capsys.readouterr().out
+    zero = pp.fill_missing(df, numeric="zero", verbose=False)   # a whole number keeps the integer type
+    assert str(zero["x"].dtype) == "Int64" and zero["x"].tolist() == [1, 2, 0]
+
+
+def test_knn_survives_an_entirely_empty_column(capsys):
+    # 0.6.0 crashed: "Shape of passed values is (3, 2), indices imply (3, 3)"
+    df = pd.DataFrame({"a": [1.0, np.nan, 3.0], "b": [np.nan] * 3, "c": [1.0, 2.0, 3.0]})
+    out = pp.fill_missing(df, numeric="knn", n_neighbors=1)
+    assert out["a"].notna().all()
+    assert out["b"].isna().all()
+    assert "Left b empty" in capsys.readouterr().out
+
+
+def test_knn_puts_columns_on_the_same_scale():
+    # Unscaled, income decides the neighbours: the missing age came from the
+    # 21-year-old with a similar income rather than the 80-year-old who matches
+    # on every other column
+    df = pd.DataFrame({"income": [100_000, 100_100, 30_000, 30_150],
+                       "visits": [9, 1, 1, 9], "years_insured": [40, 2, 3, 41],
+                       "age": [20, 80, 21, np.nan]})
+    out = pp.fill_missing(df, numeric="knn", n_neighbors=1, verbose=False)
+    assert out.loc[3, "age"] == 20
+
+
+def test_knn_features_limits_what_counts_as_similar():
+    df = pd.DataFrame({"patient_id": [1, 2, 3, 4], "height": [150.0, 190, 151, 189],
+                       "weight": [50.0, 90, np.nan, np.nan]})
+    out = pp.fill_missing(df, numeric="knn", n_neighbors=1, knn_features=["height"], verbose=False)
+    assert out["weight"].tolist() == [50, 90, 50, 90]
+    with pytest.raises(TypeError):
+        pp.fill_missing(pd.DataFrame({"t": ["a"], "x": [np.nan]}), numeric="knn", knn_features=["t"])
+
+
+def test_rows_keep_their_labels_so_they_trace_back_to_the_source():
+    df = pd.DataFrame({"x": [1.0, 2, 3, 4, 1000, np.nan]}, index=list("abcdef"))
+    assert list(pp.handle_outliers(df, verbose=False).index) == list("abcdf")
+    assert list(pp.fill_missing(df, verbose=False).index) == list("abcde")
+
+
+def test_add_age_leaves_impossible_ages_missing_and_reports_them(capsys):
+    df = pd.DataFrame({"dob": ["2030-01-01", "not a date", "1990-06-15"]})
+    out = pp.add_age_column(df, as_of="2026-01-01")
+    assert out["age"].isna().tolist() == [True, True, False]
+    assert out["age"].iloc[2] == 35
+    msg = capsys.readouterr().out
+    assert "1 birth date(s) couldn't be read" in msg and "1 birth date(s) fall after" in msg
+
+
+def test_add_age_reads_day_first_birth_dates_consistently():
+    # 25/12 shows the column is day-first, so 02/03/1990 is 2 March (age 0 on
+    # 20 February 1991), not 3 February (which would give age 1)
+    df = pd.DataFrame({"dob": ["02/03/1990", "25/12/1985"]})
+    out = pp.add_age_column(df, as_of="1991-02-20", verbose=False)
+    assert out["age"].tolist() == [0, 5]
+    mixed = pd.DataFrame({"dob": ["13/02/1990", "02/13/1990"]})
+    with pytest.raises(ValueError, match="mixes day-first and month-first"):
+        pp.add_age_column(mixed)

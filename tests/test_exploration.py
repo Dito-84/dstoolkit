@@ -3,6 +3,7 @@ import matplotlib
 matplotlib.use("Agg")  # draw off-screen so tests run without a display
 
 import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 import numpy as np
 import pandas as pd
 import pytest
@@ -174,3 +175,13 @@ def test_show_scatter_bubbles_trend_and_missing_rows():
 def test_show_scatter_with_no_complete_rows_raises():
     with pytest.raises(ValueError):
         toolkit.show_scatter(pd.Series([np.nan]), pd.Series([1.0]))
+
+
+@pytest.mark.parametrize("name", ["show_eda_table", "show_histogram", "show_distribution",
+                                  "show_density", "show_distribution_profile"])
+def test_every_chart_returns_its_figure_so_it_can_be_saved(name, grades, tmp_path):
+    # before 0.7.0 these returned None, so their charts couldn't be saved or tested
+    fig = getattr(toolkit, name)(grades)
+    assert isinstance(fig, Figure)
+    fig.savefig(tmp_path / f"{name}.png")
+    assert (tmp_path / f"{name}.png").stat().st_size > 0

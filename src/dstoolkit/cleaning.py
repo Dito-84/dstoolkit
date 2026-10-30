@@ -68,6 +68,12 @@ TRUE_EXPLICIT = TRUE_WORDS | {"1", "t"}
 FALSE_EXPLICIT = FALSE_WORDS | {"0", "f"}
 BLANK_WORDS = frozenset({"", "n/a", "na", "nan", "none", "null"})
 
+# Dates whose first two parts are day and month in some order (01/02/2020, 31-1-20),
+# and dates that start with a four-digit year (2020-01-31), which are always year-month-day
+NUMERIC_DATE = re.compile(r"^\s*(\d{1,2})[-/](\d{1,2})[-/]\d{2,4}\b")
+YEAR_FIRST = re.compile(r"^\s*\d{4}[-/]")
+DateOrder = Literal["day_first", "month_first", "ambiguous", "conflict", "none"]
+
 DOB_NAME_HINTS = ("dob", "date_of_birth", "dateofbirth", "birth_date", "birthdate", "birthday")
 
 
@@ -170,17 +176,73 @@ def to_boolean(df: pd.DataFrame, columns: Sequence[str] | None = None, verbose: 
     return result
 
 
+def _date_order(text: pd.Series) -> tuple[DateOrder, list[str]]:
+    """Which way round day and month are written in dates like 01/02/2020.
+
+    A first part above 12 can only be a day (13/02/2020), a second part above 12
+    only a day written month-first (02/13/2020). Returns the order and, for a
+    column that has both, one example of each.
+    """
+    present = text.dropna()
+    parts = present.str.extract(NUMERIC_DATE).dropna()
+    if parts.empty:
+        return "none", []
+    first, second = parts[0].astype(int), parts[1].astype(int)
+    day_first, month_first = first > 12, second > 12
+    if day_first.any() and month_first.any():
+        return "conflict", [str(present[day_first[day_first].index[0]]), str(present[month_first[month_first].index[0]])]
+    if day_first.any():
+        return "day_first", []
+    if month_first.any():
+        return "month_first", []
+    return "ambiguous", []
+
+
+def _parse_dates(text: pd.Series, dayfirst: bool, format: str | None = None) -> pd.Series:
+    """Parse normalized date text into dates, never swapping day and month.
+
+    Dates that start with a four-digit year are always read year-month-day
+    (pandas would read 2020-01-02 as 1 February when dayfirst=True). Other dates
+    are read in the given order, and a value that contradicts it (13/02/2020 read
+    month-first) becomes missing instead of being quietly read the other way round.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        if format:
+            return pd.to_datetime(text, errors="coerce", format=format)
+        year_first = text.str.match(YEAR_FIRST).fillna(False).astype(bool)
+        pieces = []
+        if year_first.any():
+            pieces.append(pd.to_datetime(text[year_first], errors="coerce", format="mixed"))
+        rest = text[~year_first]
+        if len(rest):
+            parsed = pd.to_datetime(rest, errors="coerce", format="mixed", dayfirst=dayfirst)
+            parts = rest.str.extract(NUMERIC_DATE)
+            must_be_day = pd.to_numeric(parts[1 if dayfirst else 0], errors="coerce") > 12
+            pieces.append(parsed.mask(must_be_day.fillna(False).astype(bool)))
+    if not pieces:
+        return pd.to_datetime(text, errors="coerce")
+    return pd.concat(pieces).reindex(text.index)
+
+
 def to_datetime_columns(df: pd.DataFrame, columns: Sequence[str] | None = None, min_share: float = 0.95,
-                        dayfirst: bool = False, format: str | None = None, verbose: bool = True) -> pd.DataFrame:
+                        dayfirst: bool | None = None, format: str | None = None,
+                        verbose: bool = True) -> pd.DataFrame:
     """Convert columns of dates stored as text into real dates.
 
     columns: the columns to convert. Default: text columns where at least
              `min_share` of the values look like dates (2020-01-31, 01/31/2020,
              ...) and parse as dates. Number columns are never converted:
              turning 3 into a date gives 1970-01-01, which is never what you want.
-    dayfirst: read 01/02/2020 as 1 February instead of 2 January
+    dayfirst: True reads 01/02/2020 as 1 February, False as 2 January. Default:
+              worked out from the data (13/02/2020 can only be day-first), and
+              month-first when every day is 12 or less; the summary says so.
+              A column that mixes both orders is left alone (or raises, when you
+              name it) rather than having some of its dates swapped. With
+              dayfirst set, dates that contradict it become missing.
     format: an exact format such as "%Y%m%d", for dates the default reading misses
 
+    Dates that start with the year (2020-01-31) are always read year-month-day.
     Values that can't be read as dates become missing; the summary says how many.
     """
     if not 0 < min_share <= 1:
@@ -188,7 +250,7 @@ def to_datetime_columns(df: pd.DataFrame, columns: Sequence[str] | None = None, 
     targets, explicit = _columns_to_check(df, columns)
 
     result = df.copy()
-    converted, notes = [], []
+    converted, notes, assumed = [], [], []
     for col in targets:
         series = result[col]
         if pd.api.types.is_datetime64_any_dtype(series):
@@ -205,10 +267,18 @@ def to_datetime_columns(df: pd.DataFrame, columns: Sequence[str] | None = None, 
             continue
         if not explicit and present.str.match(DATE_PATTERN).mean() < min_share:
             continue
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", UserWarning)
-            parsed = pd.to_datetime(text, errors="coerce", dayfirst=dayfirst,
-                                    format=format if format else "mixed")
+        order, examples = _date_order(text) if not format else ("none", [])
+        if order == "conflict" and dayfirst is None:
+            problem = (f"mixes day-first and month-first dates (e.g. {examples[0]!r} and {examples[1]!r}), "
+                       f"so some would be read the wrong way round")
+            if explicit:
+                raise ValueError(f"{col!r} {problem}. Fix them at the source, or pass dayfirst= "
+                                 f"or format= to read one style and leave the rest missing.")
+            notes.append(f"Left {col!r} as text: it {problem}")
+            continue
+        if dayfirst is None and order == "ambiguous":
+            assumed.append(col)
+        parsed = _parse_dates(text, order == "day_first" if dayfirst is None else dayfirst, format)
         failed = int(parsed[text.notna()].isna().sum())
         if not explicit and 1 - failed / len(present) < min_share:
             continue
@@ -218,6 +288,9 @@ def to_datetime_columns(df: pd.DataFrame, columns: Sequence[str] | None = None, 
             notes.append(f"{failed} value(s) in {col!r} couldn't be read as dates and are now missing")
     message = (f"Converted to dates: {', '.join(map(str, converted))}." if converted
                else "No date columns to convert.")
+    if assumed := [c for c in assumed if c in converted]:
+        notes.append(f"Read {', '.join(map(repr, assumed))} as month/day/year because no day was above 12; "
+                     f"pass dayfirst=True if they are day/month/year")
     _say(verbose, " ".join([message] + [n + "." for n in notes]))
     return result
 
@@ -281,7 +354,7 @@ def remove_duplicates(df: pd.DataFrame, subset: Sequence[str] | None = None,
     """
     if subset is not None:
         _check_columns(df, subset)
-    result = df.drop_duplicates(subset=subset, keep=keep, ignore_index=True)
+    result = df.drop_duplicates(subset=subset, keep=keep)   # kept rows keep their row labels
     removed = len(df) - len(result)
     _say(verbose, f"Removed {removed} duplicate row(s)." if removed else "No duplicates found.")
     return result
@@ -293,9 +366,41 @@ NUMERIC_FILL = ("mean", "median", "knn", "zero", None)
 CATEGORICAL_FILL = ("most_frequent", "missing", None)
 
 
+def _fill_numeric(series: pd.Series, values: Any) -> tuple[pd.Series, bool]:
+    """series.fillna(values); an integer column that would need decimals becomes Float64 (returns True)."""
+    if pd.api.types.is_integer_dtype(series.dtype):
+        as_float = series.astype("Float64").fillna(values)
+        if bool(((as_float % 1) == 0).fillna(True).all()):
+            return as_float.astype(series.dtype), False
+        return as_float, True
+    return series.fillna(values), False
+
+
+def _knn_fill(result: pd.DataFrame, targets: list[str], features: list[str],
+              n_neighbors: int) -> tuple[pd.DataFrame, list[str]]:
+    """Estimate gaps in `targets` from the most similar rows. Returns (estimates, columns left empty).
+
+    Columns are put on the same scale first (centred, divided by their standard
+    deviation), so a column with large numbers such as income doesn't decide on
+    its own which rows count as similar. Entirely empty columns can't be estimated.
+    """
+    try:
+        from sklearn.impute import KNNImputer
+    except ImportError as err:  # pragma: no cover
+        raise ImportError("numeric='knn' needs scikit-learn: pip install scikit-learn") from err
+    used = [c for c in dict.fromkeys(features + targets) if result[c].notna().any()]
+    empty = [c for c in targets if c not in used]
+    values = result[used].astype(float)
+    centre, spread = values.mean(), values.std(ddof=0).replace(0, 1).fillna(1)
+    scaled = KNNImputer(n_neighbors=n_neighbors).fit_transform((values - centre) / spread)
+    estimates = pd.DataFrame(scaled, columns=used, index=result.index) * spread + centre
+    return estimates, empty
+
+
 def fill_missing(df: pd.DataFrame, numeric: NumericFill | None = "mean",
                  categorical: CategoricalFill | None = "most_frequent",
                  columns: Sequence[str] | None = None, n_neighbors: int = 5,
+                 knn_features: Sequence[str] | None = None,
                  drop_empty_rows: bool = True, verbose: bool = True) -> pd.DataFrame:
     """Fill missing values, with separate methods for numeric and text columns.
 
@@ -303,21 +408,30 @@ def fill_missing(df: pd.DataFrame, numeric: NumericFill | None = "mean",
              empty columns alone rather than inventing values for them.
 
     numeric: 'mean', 'median', 'knn' (estimate from the n_neighbors most similar
-             rows), 'zero', or None to leave numeric gaps alone
+             rows), 'zero', or None to leave numeric gaps alone. An integer
+             column whose fill value has decimals is stored as decimals (Float64).
+    knn_features: numeric columns used to judge which rows are similar (default:
+                  every numeric column). Leave out IDs and the target you plan
+                  to predict. The columns being filled are always included.
     categorical: 'most_frequent', 'missing' (fill with the word "Missing"),
                  or None to leave them alone. With 'missing', gaps in True/False
                  columns (from to_boolean) stay missing, since they can't hold text.
-    drop_empty_rows: first drop rows where every value is missing
+                 Gaps in date columns always stay missing: a made-up date (or the
+                 word "Missing") would be worse than a blank.
+    drop_empty_rows: first drop rows where every value is missing. The rows that
+                     remain keep their row labels (the index).
     """
     if numeric not in NUMERIC_FILL:
         raise ValueError(f"numeric must be one of {NUMERIC_FILL}, got {numeric!r}")
     if categorical not in CATEGORICAL_FILL:
         raise ValueError(f"categorical must be one of {CATEGORICAL_FILL}, got {categorical!r}")
+    if knn_features is not None:
+        knn_features = _numeric_columns(df, knn_features)
 
     result = df.copy()
     if drop_empty_rows:
         before = len(result)
-        result = result.dropna(how="all").reset_index(drop=True)
+        result = result.dropna(how="all")
         if len(result) < before:
             _say(verbose, f"Dropped {before - len(result)} completely empty row(s).")
 
@@ -329,26 +443,29 @@ def fill_missing(df: pd.DataFrame, numeric: NumericFill | None = "mean",
     num_cols = [c for c in targets if c in numeric_all and result[c].isna().any()]
     cat_cols = [c for c in targets if c not in numeric_all and result[c].isna().any()]
 
+    as_decimals: list[str] = []
+    left_empty: list[str] = []
+    fills: dict[str, Any]
     if num_cols and numeric is not None:
         if numeric == "knn":
-            try:
-                from sklearn.impute import KNNImputer
-            except ImportError as err:  # pragma: no cover
-                raise ImportError("numeric='knn' needs scikit-learn: pip install scikit-learn") from err
-            # Similarity uses every numeric column; only the target columns are filled
-            all_num = list(result.select_dtypes(include="number").columns)
-            imputed = pd.DataFrame(KNNImputer(n_neighbors=n_neighbors).fit_transform(result[all_num]),
-                                   columns=all_num, index=result.index)
-            for col in num_cols:
-                result[col] = result[col].fillna(imputed[col])
+            features = (list(knn_features) if knn_features is not None else
+                        list(result.select_dtypes(include="number", exclude="timedelta").columns))
+            estimates, left_empty = _knn_fill(result, num_cols, features, n_neighbors)
+            fills = {col: estimates[col] for col in num_cols if col not in left_empty}
         else:
-            for col in num_cols:
-                value = {"mean": result[col].mean(), "median": result[col].median(), "zero": 0}[numeric]
-                result[col] = result[col].fillna(value)
+            fills = {col: {"mean": result[col].mean(), "median": result[col].median(), "zero": 0}[numeric]
+                     for col in num_cols}
+        for col, value in fills.items():
+            result[col], widened = _fill_numeric(result[col], value)
+            if widened:
+                as_decimals.append(col)
 
-    kept_bool = []
+    kept_bool, kept_dates = [], []
     if cat_cols and categorical is not None:
         for col in cat_cols:
+            if pd.api.types.is_datetime64_any_dtype(result[col]):
+                kept_dates.append(col)
+                continue
             if categorical == "missing" and isinstance(result[col].dtype, pd.BooleanDtype):
                 kept_bool.append(col)  # True/False columns can't hold the word "Missing"; the gaps stay missing
                 continue
@@ -366,9 +483,15 @@ def fill_missing(df: pd.DataFrame, numeric: NumericFill | None = "mean",
     done = {c: n for c, n in done.items() if n}
     _say(verbose, "Filled missing values: " + ", ".join(f"{c} ({n})" for c, n in done.items())
          if done else "No missing values filled.")
+    if as_decimals:
+        _say(verbose, f"Stored {', '.join(map(str, as_decimals))} as decimals (Float64) so the filled values fit.")
+    if left_empty:
+        _say(verbose, f"Left {', '.join(map(str, left_empty))} empty: there are no values to estimate from.")
     if kept_bool:
         _say(verbose, f"Left gaps in True/False column(s) {', '.join(map(str, kept_bool))} as missing; "
                       f"use categorical='most_frequent' to fill them instead.")
+    if kept_dates:
+        _say(verbose, f"Left gaps in date column(s) {', '.join(map(str, kept_dates))} as missing.")
     return result
 
 
@@ -408,8 +531,9 @@ def handle_outliers(df: pd.DataFrame, columns: Sequence[str] | None = None, meth
                     verbose: bool = True) -> pd.DataFrame:
     """Remove or cap outliers in numeric columns.
 
-    action: 'remove' drops any row with an outlier in the chosen columns;
-            'cap' pulls outlying values back to the nearest bound and keeps the row.
+    action: 'remove' drops any row with an outlier in the chosen columns (the
+            rows that remain keep their row labels); 'cap' pulls outlying values
+            back to the nearest bound and keeps the row.
     See find_outliers() for method and threshold.
     """
     if action not in ("remove", "cap"):
@@ -419,7 +543,7 @@ def handle_outliers(df: pd.DataFrame, columns: Sequence[str] | None = None, meth
 
     if action == "remove":
         keep = ~flags.any(axis=1)
-        result = df.loc[keep].reset_index(drop=True)
+        result = df.loc[keep].copy()
         _say(verbose, f"Removed {int((~keep).sum())} row(s) with outliers in {columns}.")
         return result
 
@@ -548,6 +672,11 @@ def add_age_column(df: pd.DataFrame, dob_column: str | None = None,
                 name looks like a birth date (dob, date_of_birth, birthday, ...)
     as_of: date to measure age at (default: today). Can also be the name of a
            date column, e.g. an admission date, to get age at that event.
+
+    Dates written as text are read the same way as to_datetime_columns(): day
+    and month are never swapped, and a column mixing both orders raises an error.
+    Ages are left missing when a date can't be read or the birth date comes
+    after the as_of date; the summary says how many.
     """
     if dob_column is None:
         candidates = [c for c in df.columns
@@ -557,35 +686,63 @@ def add_age_column(df: pd.DataFrame, dob_column: str | None = None,
         dob_column = candidates[0]
     _check_columns(df, [dob_column])
 
-    dob = pd.to_datetime(df[dob_column], errors="coerce")
+    dob, dob_unread = _read_dates(df[dob_column], dob_column)
     if isinstance(as_of, str) and as_of in df.columns:
-        ref = pd.to_datetime(df[as_of], errors="coerce")
+        ref, ref_unread = _read_dates(df[as_of], as_of)
     else:
         ref = pd.Series(pd.Timestamp(as_of) if as_of is not None else pd.Timestamp.today().normalize(),
                         index=df.index)
+        ref_unread = 0
 
     before_birthday = (ref.dt.month < dob.dt.month) | ((ref.dt.month == dob.dt.month) & (ref.dt.day < dob.dt.day))
     age = (ref.dt.year - dob.dt.year - before_birthday.astype(int)).astype("Int64")
+    born_later = int((age < 0).sum())
+    age = age.mask(age < 0)
 
     result = df.copy()
     if name in result.columns:
         result[name] = age
-        _say(verbose, f"Updated {name!r} from {dob_column!r}.")
+        message = f"Updated {name!r} from {dob_column!r}."
     else:
         result.insert(_position(result, dob_column) + 1, name, age)
-        _say(verbose, f"Added {name!r} from {dob_column!r}.")
+        message = f"Added {name!r} from {dob_column!r}."
+    problems = [f"{n} {what}" for n, what in (
+        (dob_unread, "birth date(s) couldn't be read"),
+        (ref_unread, f"{as_of!r} date(s) couldn't be read"),
+        (born_later, "birth date(s) fall after the date age is measured at"),
+    ) if n]
+    if problems:
+        message += f" Ages left missing: {'; '.join(problems)}."
+    _say(verbose, message)
     return result
+
+
+def _read_dates(series: pd.Series, name: Any) -> tuple[pd.Series, int]:
+    """(dates, how many non-blank values couldn't be read) for a date or date-text column."""
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return series, 0
+    if pd.api.types.is_numeric_dtype(series) or pd.api.types.is_bool_dtype(series):
+        raise TypeError(f"{name!r} holds numbers, not dates; converting would give 1970-01-01")
+    text = _normalized(series)
+    order, examples = _date_order(text)
+    if order == "conflict":
+        raise ValueError(f"{name!r} mixes day-first and month-first dates (e.g. {examples[0]!r} and "
+                         f"{examples[1]!r}); convert it with to_datetime_columns(dayfirst=...) first")
+    dates = _parse_dates(text, dayfirst=order == "day_first")
+    return dates, int((text.notna() & dates.isna()).sum())
 
 
 # ---------- pipeline ----------
 
-def clean(df: pd.DataFrame, types: StepOptions = None, duplicates: StepOptions = True, missing: StepOptions = True,
+def clean(df: pd.DataFrame, types: StepOptions = None, duplicates: StepOptions = True, missing: StepOptions = None,
           outliers: StepOptions = None, encode: StepOptions = None, scale: StepOptions = None,
           verbose: bool = True) -> pd.DataFrame:
     """Run the cleaning steps in a sensible order and return a new DataFrame.
 
     Order: types -> duplicates -> missing values -> outliers -> encoding -> normalization.
-    The types step (convert_types) is off unless you pass types=True or a dict.
+    Only exact duplicate rows are removed by default; every other step runs
+    only when you ask for it, because filling gaps or changing values should be
+    a choice, not a side effect (filling an ID column with its mean, say).
     Each argument is True (use defaults), False/None (skip), or a dict of options
     passed to the matching function, for example:
 

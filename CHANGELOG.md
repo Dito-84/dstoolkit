@@ -1,8 +1,32 @@
 # Changelog
 
-## Unreleased
+## 0.7.0
 
-- The repository is now `Dito-84/dstoolkit` (was `Dito-84/Data_Science_Toolkit`), matching the package name. Old links and `git+https://` installs redirect, but the README, package metadata and the browser app now use the new address.
+Fixes for problems found in a full review: several functions could change data in ways you wouldn't notice. Some defaults change, so this is a minor release rather than a patch.
+
+**Changed defaults (check your code):**
+
+- **`clean()` fills nothing unless asked.** `missing` now defaults to off (it was on), so `clean(df)` only removes exact duplicate rows. Before, it filled every numeric column, IDs included, with its mean, and every text column with its most common value. Pass `missing=True` or `missing={...}` to fill gaps.
+- **Rows keep their labels.** `remove_duplicates`, `handle_outliers(action="remove")` and `fill_missing`'s removal of empty rows no longer renumber the index, so rows can be traced back to the raw data and match `validate().failing_index`. Call `.reset_index(drop=True)` if you want 0, 1, 2, ... again.
+- **`to_datetime_columns(dayfirst=None)`** is the new default: the day/month order is worked out from the data (see below). `dayfirst=True` and `dayfirst=False` work as before, except that contradicting values are no longer swapped.
+
+**Bug fixes:**
+
+- **Day and month could be swapped within one column.** `to_datetime_columns` read each value on its own, so in one column "01/02/2020" became 2 January while "13/02/2020" became 13 February. The order is now decided once per column: a day above 12 shows which way round the dates are written, and when every day is 12 or less the summary says month/day was assumed. A column that mixes both orders is left as text with a note (or raises, when you name it), and with `dayfirst` set, values that contradict it become missing instead of being read the other way round.
+- **Year-first dates were misread with `dayfirst=True`.** pandas reads "2020-01-02" as 1 February in that mode; dates that start with the year are now always read year-month-day.
+- **`fill_missing` changed date columns.** `categorical="missing"` wrote the text "Missing" into date columns, turning them into text (pandas warns this will become an error), and `"most_frequent"` filled missing dates with the most common date. Gaps in date columns now stay missing, with a note.
+- **`fill_missing(numeric="knn")`**:
+  - crashed when a numeric column was entirely empty; such columns are now left empty, with a note
+  - measured similarity on unscaled values, so a column with large numbers (income) decided on its own which rows were neighbours; columns are now put on the same scale first
+  - new `knn_features=` chooses which columns judge similarity, so IDs and prediction targets can be left out
+- **Mean or median fills crashed on nullable integer columns** (`Int64`) when the value had decimals. The column is now stored as decimals (`Float64`), with a note; whole-number fills keep the integer type.
+- **`add_age_column`** returned negative ages for birth dates after the reference date, and silently left unreadable dates blank. Both now give a missing age and are counted in the summary. Text dates are read with the same day/month rules as `to_datetime_columns`.
+- **`profile()`** flags date columns that mix day-first and month-first order (and no longer suggests a conversion or an age column for them), and its earliest/latest dates use the same reading.
+- `show_eda_table`, `show_histogram`, `show_distribution`, `show_density` and `show_distribution_profile` now return their figure, like the other chart functions, so they can be saved.
+
+**Docs:** the README has a new "What it's for, and what it isn't" section: dstoolkit is for exploring and cleaning a dataset once, not a modelling pipeline, because its functions learn from the data they're given and have no separate fit and transform step.
+
+**Other:** the repository is now `Dito-84/dstoolkit` (was `Dito-84/Data_Science_Toolkit`), matching the package name. Old links and `git+https://` installs redirect, but the README, package metadata and the browser app now use the new address.
 
 ## 0.6.0
 

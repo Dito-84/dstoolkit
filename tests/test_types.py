@@ -188,3 +188,51 @@ def test_profile_suggests_conversions_and_its_code_runs(discharges):
     exec(code, scope)
     assert scope["df"]["complication"].dtype == "boolean"
     assert pd.api.types.is_datetime64_any_dtype(scope["df"]["admit"])
+
+
+# ---------- day/month order (0.7.0) ----------
+
+def test_day_month_order_is_worked_out_from_the_data_not_per_value():
+    # 0.6.0 read each value on its own: "01/02/2020" became 2 January but
+    # "13/02/2020" became 13 February in the same column
+    df = pd.DataFrame({"d": ["01/02/2020", "13/02/2020", "03/04/2020"]})
+    out = dst.to_datetime_columns(df, verbose=False)
+    assert out["d"].tolist() == [pd.Timestamp("2020-02-01"), pd.Timestamp("2020-02-13"),
+                                 pd.Timestamp("2020-04-03")]
+
+
+def test_column_mixing_both_orders_is_left_alone_or_raises_when_named(capsys):
+    df = pd.DataFrame({"d": ["13/02/2020", "02/13/2020", "01/01/2020"]})
+    out = dst.to_datetime_columns(df)
+    assert out["d"].tolist() == df["d"].tolist()
+    assert "mixes day-first and month-first" in capsys.readouterr().out
+    with pytest.raises(ValueError, match="'13/02/2020' and '02/13/2020'"):
+        dst.to_datetime_columns(df, ["d"])
+
+
+def test_explicit_dayfirst_never_swaps_contradicting_values(capsys):
+    df = pd.DataFrame({"d": ["01/02/2020", "13/02/2020"]})
+    out = dst.to_datetime_columns(df, ["d"], dayfirst=False)
+    assert out["d"].iloc[0] == pd.Timestamp("2020-01-02")
+    assert pd.isna(out["d"].iloc[1])            # was silently read as 13 February
+    assert "1 value(s) in 'd' couldn't be read" in capsys.readouterr().out
+
+
+def test_year_first_dates_are_never_read_as_year_day_month():
+    # pandas reads "2020-01-02" as 1 February when dayfirst=True
+    df = pd.DataFrame({"d": ["2020-01-02", "13/02/2020"]})
+    out = dst.to_datetime_columns(df, ["d"], dayfirst=True, verbose=False)
+    assert out["d"].tolist() == [pd.Timestamp("2020-01-02"), pd.Timestamp("2020-02-13")]
+
+
+def test_ambiguous_order_is_reported(capsys):
+    dst.to_datetime_columns(pd.DataFrame({"d": ["01/02/2020", "03/04/2020"]}))
+    assert "as month/day/year because no day was above 12" in capsys.readouterr().out
+
+
+def test_profile_flags_mixed_order_dates_without_suggesting_a_conversion():
+    df = pd.DataFrame({"visit": ["13/02/2020", "02/13/2020", "01/01/2020"] * 5})
+    report = dst.profile(df, charts=False)
+    notes = [s for s in report.suggestions if s.column == "visit"]
+    assert any("mix day-first and month-first" in s.message for s in notes)
+    assert "to_datetime" not in {s.action for s in notes}

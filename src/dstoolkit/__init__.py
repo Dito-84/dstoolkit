@@ -48,7 +48,7 @@ from .exploration import (
     show_scatter,
 )
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 __all__ = ["cleaning", "exploration", "profiling", "validation", "__version__",
            *cleaning.__all__, *exploration.__all__, *profiling.__all__, *validation.__all__]
