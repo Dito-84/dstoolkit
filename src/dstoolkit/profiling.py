@@ -31,7 +31,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
 
-from .cleaning import DATE_PATTERN, DOB_NAME_HINTS, _bounds, _is_yes_no
+from .cleaning import DATE_PATTERN, DOB_NAME_HINTS, _bounds, _date_order, _is_yes_no, _normalized, _parse_dates
 from .validation import ColumnRule, Comparison, ValidationReport, validate
 
 __all__ = ["profile", "Profile", "ColumnProfile", "Suggestion"]
@@ -481,13 +481,24 @@ def _profile_column(series: pd.Series, name: str, charts: bool, max_categories: 
         col.top_values = [(str(k), int(v)) for k, v in counts.head(max_categories).items()]
         col.stats = {"most common": counts.index[0], "most common count": int(counts.iloc[0])}
         if kind == "datetime":
-            dates = values if pd.api.types.is_datetime64_any_dtype(series) else \
-                pd.to_datetime(values, errors="coerce", format="mixed")
-            if not pd.api.types.is_datetime64_any_dtype(series):
-                suggest("type", "medium", "Dates stored as text; convert to dates so they sort, filter "
-                        "and subtract correctly.", "to_datetime")
+            order = "none"
+            if pd.api.types.is_datetime64_any_dtype(series):
+                dates = values
+            else:
+                text = _normalized(values)
+                order, examples = _date_order(text)
+                dates = _parse_dates(text, dayfirst=order == "day_first")
+                if order == "conflict":
+                    dates = dates.where(dates.isna())  # can't be read reliably, so no earliest/latest
+                    suggest("type", "high", f"Dates mix day-first and month-first order (e.g. {examples[0]!r} "
+                            f"and {examples[1]!r}), so some would be read the wrong way round. Fix them at "
+                            f"the source, or convert with to_datetime_columns(dayfirst=...) if one order is "
+                            f"right for all of them.")
+                else:
+                    suggest("type", "medium", "Dates stored as text; convert to dates so they sort, filter "
+                            "and subtract correctly.", "to_datetime")
             col.stats = {"earliest": dates.min(), "latest": dates.max(), "unparseable": int(dates.isna().sum())}
-            if any(h in name.lower().replace(" ", "_") for h in DOB_NAME_HINTS):
+            if order != "conflict" and any(h in name.lower().replace(" ", "_") for h in DOB_NAME_HINTS):
                 suggest("derive", "low", "Looks like a date of birth; derive an age column.", "add_age")
         elif kind == "text":
             col.stats["avg length"] = float(values.astype(str).str.len().mean())

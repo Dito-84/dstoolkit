@@ -12,6 +12,12 @@ pip install git+https://github.com/Dito-84/dstoolkit
 
 Requires Python 3.10+.
 
+## What it's for, and what it isn't
+
+dstoolkit is for **getting to know a dataset and cleaning it once**: profiling a new file, fixing types, checking it against rules, and preparing a clean copy for analysis or a dashboard. It's built to be safe by default: when a guess could damage data (reading 1/0 as True/False, swapping day and month, filling an ID column with its mean), it leaves the data alone or asks you to be explicit.
+
+It is **not** a modelling pipeline. Functions such as `fill_missing`, `normalize`, `encode_categorical` and `handle_outliers` learn their numbers (means, ranges, categories, outlier bounds) from the DataFrame you pass in, and there is no separate fit and transform step. Run them on a full dataset before splitting it, and information from the test rows leaks into training. For machine learning, split first and fit any preprocessing inside cross-validation (scikit-learn's `Pipeline` does this), the way the [Titanic project](https://github.com/Dito-84/titanic-survival-prediction) fills missing ages inside each fold. dstoolkit's profile and validation still help before and after.
+
 ## Profile a dataset in one call
 
 ```python
@@ -36,7 +42,7 @@ The report covers the whole dataset (rows, duplicates, missing cells), every col
 ```python
 df = dst.clean(
     raw,
-    missing={"numeric": "median", "columns": ["age", "fare", "embarked"]},
+    missing={"numeric": "median", "columns": ["age", "fare", "embarked"]},   # every step is opt-in
     outliers={"columns": ["fare"], "action": "cap"},
     encode={"columns": {"sex": "label", "embarked": "onehot"}},
 )
@@ -49,7 +55,7 @@ df = dst.clean(
 dst.show_distribution_profile(df["age"], title="Passenger Age")
 ```
 
-Each cleaning step prints a one-line summary of what it changed; pass `verbose=False` to silence it.
+Each cleaning step prints a one-line summary of what it changed; pass `verbose=False` to silence it. Apart from removing exact duplicate rows, `clean()` changes nothing you don't ask for, and rows keep their original labels (the index), so any row can be traced back to the raw data.
 
 ## Validate against your own rules
 
@@ -91,19 +97,19 @@ Why not pandera or Great Expectations? They're the right tools for enforcing dat
 | Function | What it does |
 |---|---|
 | `to_boolean(df, columns)` | Yes/No text (any case, also Y/N, True/False) to True/False; blanks and "N/A" become missing. Columns with any other value are left alone |
-| `to_datetime_columns(df, columns, min_share)` | Date text (2020-01-31, 01/31/2020, ...) to real dates. Number columns are never turned into dates |
+| `to_datetime_columns(df, columns, min_share, dayfirst, format)` | Date text (2020-01-31, 01/31/2020, ...) to real dates. Day/month order is worked out per column from the data (13/02/2020 can only be day-first), never value by value; a column mixing both orders is left alone. Number columns are never turned into dates |
 | `to_category(df, columns, max_unique)` | Repeated text labels (hospital, region) to pandas' category type |
 | `convert_types(df)` | Runs the three type conversions above with safe defaults (categories optional) |
-| `remove_duplicates(df, subset, keep)` | Drops duplicate rows, optionally judged on a subset of columns |
-| `fill_missing(df, numeric, categorical, columns)` | Fills gaps: mean, median, zero or k-nearest-neighbours for numbers; most frequent value or "Missing" for text |
+| `remove_duplicates(df, subset, keep)` | Drops duplicate rows, optionally judged on a subset of columns; kept rows keep their labels |
+| `fill_missing(df, numeric, categorical, columns, knn_features)` | Fills gaps: mean, median, zero or k-nearest-neighbours for numbers (columns scaled first; `knn_features` picks which columns judge similarity); most frequent value or "Missing" for text. Date gaps are left missing |
 | `find_outliers(df, columns, method)` | True/False table of outliers by IQR or z-score |
-| `handle_outliers(df, columns, method, action)` | Removes outlier rows, or caps values at the bounds and keeps the rows |
+| `handle_outliers(df, columns, method, action)` | Removes outlier rows (the rest keep their labels), or caps values at the bounds and keeps the rows |
 | `winsorize(df, columns, lower, upper)` | Clips columns to percentiles (default 5th–95th) |
 | `log_transform(df, columns, suffix)` | log(1 + x) for long right-tailed columns like income or price |
 | `encode_categorical(df, columns)` | One-hot or label encoding per column; label codes keep missing values missing |
 | `normalize(df, columns)` | Min-max (0–1) or z-score scaling per column |
-| `add_age_column(df, dob_column, as_of)` | Age in completed years from a birth-date column, as of today or another date column |
-| `clean(df, ...)` | Runs types (optional) → duplicates → missing values → outliers → encoding → scaling in one call |
+| `add_age_column(df, dob_column, as_of)` | Age in completed years from a birth-date column, as of today or another date column. Unreadable or future birth dates give a missing age, and are counted in the summary |
+| `clean(df, ...)` | Runs types → duplicates → missing values → outliers → encoding → scaling in one call. Only duplicate removal is on by default; every other step is opt-in |
 
 ## Profiling: `dstoolkit.profiling`
 
@@ -150,6 +156,8 @@ Why not pandera or Great Expectations? They're the right tools for enforcing dat
 | `fit_line(x, y)` | Least-squares line; returns slope, intercept and a `predict` function |
 | `drop_nulls(data)` | Copy of a Series/DataFrame with null rows removed |
 | `add_passed(df, grade_col, threshold)` | Adds a True/False column for values at or above a threshold |
+
+Every chart function returns its matplotlib figure, so it can be saved with `fig.savefig("chart.png")`. In Jupyter, end the line with `;` (or assign the result) so the returned figure isn't shown twice.
 
 Every function is also available directly from `dstoolkit`, as in the quick start.
 

@@ -11,7 +11,9 @@
     dst.show_scatter(df["StudyHours"], df["Grade"], trend=True)
 
 Every function drops null values first, so a column with missing data is
-safe to pass in directly.
+safe to pass in directly. Chart functions return their matplotlib figure, so
+it can be saved with fig.savefig(...); in Jupyter, end the line with ; to keep
+the returned figure from being shown a second time.
 """
 
 from __future__ import annotations
@@ -74,7 +76,7 @@ def show_eda(var_data: pd.Series) -> None:
     )
 
 
-def show_eda_table(var_data: pd.Series, decimals: int = 2) -> None:
+def show_eda_table(var_data: pd.Series, decimals: int = 2) -> Figure:
     """Draw the .describe() statistics for a Series as a table figure."""
     data = drop_nulls(var_data)
     fig, ax = plt.subplots()
@@ -82,6 +84,7 @@ def show_eda_table(var_data: pd.Series, decimals: int = 2) -> None:
     pd.plotting.table(ax, data.describe().round(decimals), loc="center",
                       cellLoc="center", colWidths=[0.4, 0.4])
     plt.show()
+    return fig
 
 
 def _mark_center(ax: Axes, data: pd.Series, mode: bool = True) -> None:
@@ -99,7 +102,7 @@ def _trim_density(ax: Axes, data: pd.Series) -> None:
     ax.set_xlim(data.min() - pad, data.max() + pad)
 
 
-def show_histogram(var_data: pd.Series, title: str = "Data Distribution") -> None:
+def show_histogram(var_data: pd.Series, title: str = "Data Distribution") -> Figure:
     """Histogram with mean, median and mode lines."""
     data = drop_nulls(var_data)
     fig, ax = plt.subplots(figsize=(10, 4))
@@ -109,9 +112,10 @@ def show_histogram(var_data: pd.Series, title: str = "Data Distribution") -> Non
     ax.set_xlabel("Value")
     ax.set_ylabel("Frequency")
     plt.show()
+    return fig
 
 
-def show_distribution(var_data: pd.Series, title: str = "Data Distribution") -> None:
+def show_distribution(var_data: pd.Series, title: str = "Data Distribution") -> Figure:
     """Histogram (with center lines) stacked above a horizontal boxplot."""
     data = drop_nulls(var_data)
     fig, ax = plt.subplots(2, 1, figsize=(12.8, 7.2), sharex=True)
@@ -122,9 +126,10 @@ def show_distribution(var_data: pd.Series, title: str = "Data Distribution") -> 
     ax[1].set_xlabel("Value")
     fig.suptitle(title)
     plt.show()
+    return fig
 
 
-def show_density(var_data: pd.Series, title: str = "Data Density") -> None:
+def show_density(var_data: pd.Series, title: str = "Data Density") -> Figure:
     """Kernel density curve with mean and median lines."""
     data = drop_nulls(var_data)
     fig, ax = plt.subplots(figsize=(10, 4))
@@ -133,9 +138,10 @@ def show_density(var_data: pd.Series, title: str = "Data Density") -> None:
     _mark_center(ax, data, mode=False)
     ax.set_title(title)
     plt.show()
+    return fig
 
 
-def show_distribution_profile(var_data: pd.Series, title: str = "Data Distribution") -> None:
+def show_distribution_profile(var_data: pd.Series, title: str = "Data Distribution") -> Figure:
     """2x2 overview: histogram, density curve, boxplot and summary table."""
     data = drop_nulls(var_data)
     fig, ax = plt.subplots(2, 2, figsize=(12.8, 7.2))
@@ -155,6 +161,7 @@ def show_distribution_profile(var_data: pd.Series, title: str = "Data Distributi
     fig.suptitle(title)
     plt.subplots_adjust(wspace=0.25)
     plt.show()
+    return fig
 
 
 def fit_line(x: pd.Series, y: pd.Series) -> tuple[float, float, Callable[[float], float]]:
@@ -163,7 +170,7 @@ def fit_line(x: pd.Series, y: pd.Series) -> tuple[float, float, Callable[[float]
     `predict` is a function that uses the fitted m and b, so predictions
     always match the data instead of hardcoded numbers.
     """
-    from scipy import stats  # imported here so the rest of the package loads without scipy
+    from scipy import stats  # imported on first use; scipy is slow to import
 
     pairs = pd.concat([pd.Series(x).rename("x"), pd.Series(y).rename("y")], axis=1).dropna()
     result = stats.linregress(pairs["x"], pairs["y"])
