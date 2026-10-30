@@ -81,6 +81,9 @@ jobs:
           pip install -e . pytest playwright openpyxl
           python -m playwright install --with-deps chromium
 
+      - name: TEMPORARY report Pyodide hash
+        run: echo "::notice title=pyodide-hash::sha384-$(curl -sSfL https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyodide.js | openssl dgst -sha384 -binary | openssl base64 -A)"
+
       - name: App logic tests
         run: pytest -v app/tests/test_app_core.py
 
