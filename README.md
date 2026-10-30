@@ -1,13 +1,13 @@
 # dstoolkit
 
-[![CI](https://github.com/Dito-84/Data_Science_Toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/Dito-84/Data_Science_Toolkit/actions/workflows/ci.yml)
+[![CI](https://github.com/Dito-84/dstoolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/Dito-84/dstoolkit/actions/workflows/ci.yml)
 
 **Data Science Toolkit**: a small, typed Python package for the first stages of a data project. It **profiles** a pandas DataFrame and suggests how to clean it, **cleans** it (duplicates, missing values, outliers, encoding, scaling), **validates** it against rules you write, and **explores** it (summary statistics, distribution plots, line fits). Every function returns a new DataFrame, so your raw data is never changed, and every function copes with missing values on its own.
 
 ## Install
 
 ```bash
-pip install git+https://github.com/Dito-84/Data_Science_Toolkit
+pip install git+https://github.com/Dito-84/dstoolkit
 ```
 
 Requires Python 3.10+.
@@ -185,8 +185,8 @@ data/                 StudentData.csv, titanic3.csv
 ## Development
 
 ```bash
-git clone https://github.com/Dito-84/Data_Science_Toolkit
-cd Data_Science_Toolkit
+git clone https://github.com/Dito-84/dstoolkit
+cd dstoolkit
 pip install -e ".[dev]"
 pytest    # the test suite
 mypy      # type check

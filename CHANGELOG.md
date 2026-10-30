@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The repository is now `Dito-84/dstoolkit` (was `Dito-84/Data_Science_Toolkit`), matching the package name. Old links and `git+https://` installs redirect, but the README, package metadata and the browser app now use the new address.
+
 ## 0.6.0
 
 - **`dst.validate(df, rules, checks)`**: checks data against rules you write and reports every problem, without changing the data. Rules per column: `type`, `required`, `min`/`max`, `allowed`, `unique` and `pattern`. `checks` compare two columns in each row, e.g. `("discharge_date", ">=", "admission_date")`. Returns a `ValidationReport` with `.ok`, `.summary()`, `.failures()`, `.failing_index` and `.raise_if_failed()`.
