@@ -28,7 +28,7 @@ dependencies = [
 
 [project.optional-dependencies]
 notebooks = ["jupyter"]
-dev = ["pytest", "mypy", "pandas-stubs", "nbconvert", "nbclient", "ipykernel"]
+dev = ["pytest", "pytest-cov", "mypy", "pandas-stubs", "ruff", "nbconvert", "nbclient", "ipykernel"]
 
 [project.urls]
 Repository = "https://github.com/Dito-84/dstoolkit"
@@ -45,6 +45,25 @@ dstoolkit = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["dstoolkit"]
+
+[tool.coverage.report]
+fail_under = 95
+show_missing = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = ["notebooks/learning"]   # tutorial notebooks, kept as they were written
+
+[tool.ruff.lint]
+# pycodestyle, pyflakes, import order, likely bugs (bugbear), modern syntax for 3.10+
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/dstoolkit/__init__.py" = ["F401"]   # re-exports; __all__ is built from each module's __all__
 
 [tool.mypy]
 files = ["src"]

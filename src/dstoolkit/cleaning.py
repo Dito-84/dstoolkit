@@ -27,7 +27,7 @@ from __future__ import annotations
 import re
 import warnings
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Any, Literal, Union
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -38,7 +38,7 @@ OutlierMethod = Literal["iqr", "zscore"]
 OutlierAction = Literal["remove", "cap"]
 Encoding = Literal["onehot", "label"]
 Scaling = Literal["minmax", "zscore"]
-StepOptions = Union[bool, Mapping[str, Any], None]
+StepOptions = bool | Mapping[str, Any] | None
 
 __all__ = [
     "to_boolean",
@@ -190,7 +190,8 @@ def _date_order(text: pd.Series) -> tuple[DateOrder, list[str]]:
     first, second = parts[0].astype(int), parts[1].astype(int)
     day_first, month_first = first > 12, second > 12
     if day_first.any() and month_first.any():
-        return "conflict", [str(present[day_first[day_first].index[0]]), str(present[month_first[month_first].index[0]])]
+        first_example, second_example = day_first[day_first].index[0], month_first[month_first].index[0]
+        return "conflict", [str(present.loc[first_example]), str(present.loc[second_example])]
     if day_first.any():
         return "day_first", []
     if month_first.any():

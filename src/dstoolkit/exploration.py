@@ -18,7 +18,8 @@ the returned figure from being shown a second time.
 
 from __future__ import annotations
 
-from typing import Callable, TypeVar
+from collections.abc import Callable
+from typing import TypeVar
 
 import matplotlib.pyplot as plt
 import pandas as pd
