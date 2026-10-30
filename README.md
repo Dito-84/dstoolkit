@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Dito-84/dstoolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/Dito-84/dstoolkit/actions/workflows/ci.yml)
 
-**Data Science Toolkit**: a small, typed Python package for the first stages of a data project. It **profiles** a pandas DataFrame and suggests how to clean it, **cleans** it (duplicates, missing values, outliers, encoding, scaling), **validates** it against rules you write, **explores** it (summary statistics, distribution plots, line fits), and **prepares it for models** with scikit-learn transformers that learn on training data only. Every function returns a new DataFrame, so your raw data is never changed, and every function copes with missing values on its own.
+**Data Science Toolkit**: a small, typed Python package for the first stages of a data project. It **profiles** a pandas DataFrame and suggests how to clean it, **cleans** it (duplicates, missing values, outliers, encoding, scaling), **validates** it against rules you write, **explores** it (summary statistics, distribution plots, line fits), and **prepares it for models** with scikit-learn transformers that learn on training data only. Every cleaning function returns a new DataFrame, so your raw data is never changed, and every function copes with missing values on its own. There's also a [drag-and-drop browser version](#browser-app) that needs no install.
 
 ## Install
 
@@ -135,6 +135,10 @@ cross_val_score(model, X, y, cv=folds)   # cleaning is refitted on each training
 
 On the data they were fitted on, they give the same results as `fill_missing`, `handle_outliers(action="cap")`, `encode_categorical` and `normalize`. They take and return DataFrames (they need column names; inside a `ColumnTransformer`, call `.set_output(transform="pandas")`), support `get_feature_names_out()`, and can be cloned and pickled like any scikit-learn transformer.
 
+## Browser app
+
+[`app/`](app/) is a drag-and-drop page: drop a CSV or Excel file to get the profile and a list of suggested cleaning steps, untick any you don't want, and download the cleaned CSV, the report and a Python script that repeats the same steps. Python runs inside the browser ([Pyodide](https://pyodide.org)), so the file is never uploaded. A Content-Security-Policy makes the browser enforce that: the page may only talk to its own site and one pinned Pyodide release. It's tested end to end in a real browser in CI. See [`app/README.md`](app/README.md) to run it locally; it will be published on GitHub Pages.
+
 ## Cleaning: `dstoolkit.cleaning`
 
 | Function | What it does |
@@ -229,10 +233,12 @@ src/dstoolkit/
     exploration.py    summaries, distribution plots, line fits
     py.typed          marks the package as typed
 tests/                pytest suite
+app/                  drag-and-drop browser app (page, Python glue, build script, tests)
 notebooks/            worked examples on real data
 notebooks/learning/   tutorial notebooks
 docs/                 README screenshot and an example report
 data/                 StudentData.csv, titanic3.csv
+.github/workflows/    CI (tests, minimum versions, browser app) and the GitHub Pages deploy
 ```
 
 ## Development
@@ -246,11 +252,13 @@ mypy           # type check
 ruff check .   # lint: style, import order, likely bugs
 ```
 
-The tests check every function, including that inputs are never modified, that every plot draws when values are missing, that report HTML escapes column names, and that the code `profile()` suggests actually runs. GitHub Actions runs the linter, the type check, the tests with coverage and every notebook on Python 3.10 and 3.13 for each push and pull request, and runs the tests again with the oldest versions of pandas, NumPy, matplotlib, SciPy and scikit-learn that dstoolkit says it supports. See [CHANGELOG.md](CHANGELOG.md) for version history.
+The tests check every function, including that inputs are never modified, that every plot draws when values are missing, that report HTML escapes column names, that the code `profile()` suggests actually runs, and that the transformers learn nothing from test data. Every bug fix has a test that reproduces the bug. The browser app is tested end to end in a real Chromium, and fails on any security-policy violation. GitHub Actions runs the linter, the type check, the tests with coverage and every notebook on Python 3.10 and 3.13 for each push and pull request, and runs the tests again with the oldest versions of pandas, NumPy, matplotlib, SciPy and scikit-learn that dstoolkit says it supports. See [CHANGELOG.md](CHANGELOG.md) for version history.
+
+Changes go through a pull request and squash-merge. The branch rules for `main` are kept in [`.github/rulesets/protect-main.json`](.github/rulesets/protect-main.json): a pull request is required, all four CI checks must pass on an up-to-date branch, merges are squash-only, and `main` can't be force-pushed or deleted. A test keeps the required checks in step with the CI jobs.
 
 ## Used in
 
-- **[Hip & Knee Replacement Outcomes Dashboard](https://github.com/Dito-84/hip-knee-replacement-outcomes-dashboard)**: `scripts/check_data.py` profiles a real discharge export before the dashboard is built, using `missing_ok` because a blank complication or readmission means "didn't happen"
+- **[Hip & Knee Replacement Outcomes Dashboard](https://github.com/Dito-84/hip-knee-replacement-outcomes-dashboard)** (built on synthetic data): `scripts/check_data.py` profiles a discharge export on the analyst's own computer before a dashboard is built from it, using `missing_ok` because a blank complication or readmission means "didn't happen"
 - **[Titanic Survival Prediction](https://github.com/Dito-84/titanic-survival-prediction)**: a data-quality check before modeling. Its suggestions inform the choices, but missing ages are still filled inside each cross-validation fold so no test data leaks into training
 
 Both use dstoolkit as an optional extra, pinned to a tested commit, so changes here can't break them.
