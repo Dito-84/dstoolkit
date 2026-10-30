@@ -130,3 +130,53 @@ def test_preview_escapes_cell_values():
     app_core.analyze("x.csv", data)
     preview = json.loads(app_core.clean("[]"))["preview"]
     assert "<script>" not in preview and "&lt;script&gt;" in preview
+
+
+# ---------- page security (no network needed) ----------
+
+PAGE = (APP / "index.html").read_text(encoding="utf-8")
+SCRIPT = (APP / "app.js").read_text(encoding="utf-8")
+
+
+def _csp() -> dict[str, list[str]]:
+    import re
+    content = re.search(r'http-equiv="Content-Security-Policy" content="([^"]+)"', PAGE).group(1)
+    return {d.split()[0]: d.split()[1:] for d in (part.strip() for part in content.split(";")) if d}
+
+
+def test_page_has_no_inline_scripts():
+    # the policy has no 'unsafe-inline' for scripts, so an inline <script> would be blocked
+    import re
+    tags = re.findall(r"<script\b[^>]*>", PAGE)
+    assert tags and all("src=" in t for t in tags)
+    assert "'unsafe-inline'" not in _csp()["script-src"]
+    assert "'unsafe-eval'" not in _csp()["script-src"]
+
+
+def test_policy_allows_only_this_site_and_the_pinned_pyodide_release():
+    import re
+    csp = _csp()
+    assert csp["default-src"] == ["'none'"]
+    pinned = re.search(r'<script src="(https://cdn\.jsdelivr\.net/pyodide/[^"]+/full/)pyodide\.js"', PAGE).group(1)
+    for directive in ("script-src", "connect-src"):
+        hosts = [s for s in csp[directive] if s.startswith("http")]
+        assert hosts == [pinned], f"{directive} allows {hosts}"
+    assert f'const PYODIDE_INDEX = "{pinned}";' in SCRIPT     # all three name the same release
+
+
+def test_pyodide_script_is_pinned_with_an_integrity_hash():
+    import re
+    tag = re.search(r'<script src="https://cdn\.jsdelivr\.net/[^>]+>', PAGE).group(0)
+    assert re.search(r'integrity="sha384-[A-Za-z0-9+/=]{64}"', tag), tag
+    assert 'crossorigin="anonymous"' in tag
+
+
+def test_build_fills_in_the_wheel_name(tmp_path):
+    subprocess.run([sys.executable, str(APP / "build.py"), "--out", str(tmp_path / "site")], check=True,
+                   capture_output=True)
+    built = (tmp_path / "site" / "app.js").read_text(encoding="utf-8")
+    assert "__WHEEL__" not in built and 'const WHEEL = "dstoolkit-' in built
+    assert "__EXCEL_WHEELS__" not in built and "wheels/openpyxl-3.1.5-" in built and "wheels/et_xmlfile-2.0.0-" in built
+    served = sorted(p.name.split("-")[0] for p in (tmp_path / "site" / "wheels").glob("*.whl"))
+    assert served == ["et_xmlfile", "openpyxl"]
+    assert (tmp_path / "site" / "index.html").read_text(encoding="utf-8") == PAGE

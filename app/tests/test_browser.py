@@ -49,6 +49,9 @@ def browser():
 @pytest.fixture(scope="module")
 def page(server, browser):
     context = browser.new_context(accept_downloads=True, viewport={"width": 1280, "height": 900})
+    # record anything the Content-Security-Policy blocks
+    context.add_init_script("""document.addEventListener("securitypolicyviolation",
+        e => (window.__csp = window.__csp || []).push(e.violatedDirective + " " + e.blockedURI));""")
     pg = context.new_page()
     errors = []
     pg.on("pageerror", lambda e: errors.append(str(e)))
@@ -67,9 +70,41 @@ def _download(page, button, tmp_path):
     return path
 
 
+def _blocked(page):
+    return page.evaluate("window.__csp || []")
+
+
+def _wait_for_status(page, text, timeout=120_000):
+    """Wait for the status line to show `text`; on failure, say what it showed and what was blocked.
+
+    (A selector rather than wait_for_function: the page's security policy blocks the eval() that uses.)
+    """
+    try:
+        page.locator("#status", has_text=text).wait_for(timeout=timeout)
+    except Exception as err:
+        raise AssertionError(f"status line: {page.inner_text('#status')!r}; blocked by the policy: "
+                             f"{_blocked(page)}; page errors: {page.errors}") from err
+
+
+def test_pinned_pyodide_matches_its_integrity_hash():
+    # if jsDelivr ever served different bytes, the browser would refuse to run them;
+    # this says so plainly (and gives the right hash when Pyodide is upgraded)
+    import base64
+    import hashlib
+    import re
+    import urllib.request
+
+    page = (ROOT / "app" / "index.html").read_text(encoding="utf-8")
+    url, pinned = re.search(r'<script src="(https://cdn\.jsdelivr\.net/[^"]+)"\s+integrity="([^"]+)"', page).groups()
+    with urllib.request.urlopen(url, timeout=60) as response:
+        actual = "sha384-" + base64.b64encode(hashlib.sha384(response.read()).digest()).decode()
+    assert pinned == actual, f"{url} hashes to integrity=\"{actual}\""
+
+
 def test_loads_without_errors(page):
     assert "Ready" in page.inner_text("#status")
     assert page.errors == []
+    assert _blocked(page) == []
     page.screenshot(path=SHOTS / "1_ready.png")
 
 
@@ -109,6 +144,7 @@ def test_clean_with_one_step_unticked(page, tmp_path):
     report = _download(page, "#dl-report", tmp_path).read_text()
     assert report.startswith("<!doctype html>") and "titanic3.csv" in report
     assert page.errors == []
+    assert _blocked(page) == []
 
 
 def test_excel_upload(page, tmp_path):
@@ -117,10 +153,10 @@ def test_excel_upload(page, tmp_path):
                   "age": [30 + i % 40 if i % 7 else None for i in range(60)],
                   "plan": ["Basic", "Plus", "Premium"] * 20}).to_excel(path, index=False)
     page.set_input_files("#file", str(path))
-    page.wait_for_function("document.getElementById('status').innerText.includes('clinic.xlsx: 60 rows')",
-                           timeout=120_000)
+    _wait_for_status(page, "clinic.xlsx: 60 rows")
     assert "plan" in page.inner_text("#plan")
     assert page.errors == []
+    assert _blocked(page) == []     # openpyxl is served by the site itself, never fetched from PyPI
 
 
 def test_bad_file_shows_friendly_error(page, tmp_path):
