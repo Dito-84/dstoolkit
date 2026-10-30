@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **scikit-learn is now optional.** It's only needed for `fill_missing(numeric="knn")`, so a plain install no longer pulls it in. Install `dstoolkit[knn]` (or scikit-learn itself) to use KNN filling; without it, `numeric="knn"` raises an error that says what to install. Nothing else changes.
+- **Development:** a new CI job runs the tests with the oldest supported versions (pandas 2.0, NumPy 1.24, matplotlib 3.10, SciPy 1.10, scikit-learn 1.3), so the minimums in `pyproject.toml` are tested rather than assumed.
 - **Development:** CI now lints with Ruff (style, import order, likely bugs, modern syntax) and measures test coverage, failing below 95% (currently about 97%). `pip install -e ".[dev]"` installs both. No change to how the package behaves.
 
 ## 0.7.0

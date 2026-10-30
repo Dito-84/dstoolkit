@@ -42,6 +42,29 @@ jobs:
             echo "::endgroup::"
           done
 
+  minimum-versions:
+    # The oldest pandas, NumPy, matplotlib, SciPy and scikit-learn allowed by pyproject.toml
+    name: test (minimum versions)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+
+      - name: Install the lowest allowed versions
+        run: |
+          pip install uv
+          uv pip install --system --resolution lowest-direct -e ".[knn]"
+          uv pip install --system pytest
+          python -c "import pandas, numpy, matplotlib, scipy, sklearn; print('pandas', pandas.__version__, '| numpy', numpy.__version__, '| matplotlib', matplotlib.__version__, '| scipy', scipy.__version__, '| scikit-learn', sklearn.__version__)"
+
+      - name: Run tests
+        env:
+          MPLBACKEND: Agg
+        run: pytest -v
+
   browser-app:
     # Loads the drag-and-drop app in a real browser with Python from the Pyodide CDN
     runs-on: ubuntu-latest

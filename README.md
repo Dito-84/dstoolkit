@@ -10,7 +10,11 @@
 pip install git+https://github.com/Dito-84/dstoolkit
 ```
 
-Requires Python 3.10+.
+Requires Python 3.10+, with pandas, NumPy, matplotlib and SciPy. k-nearest-neighbours filling (`fill_missing(numeric="knn")`) also needs scikit-learn, which is optional:
+
+```bash
+pip install "dstoolkit[knn] @ git+https://github.com/Dito-84/dstoolkit"
+```
 
 ## What it's for, and what it isn't
 
@@ -101,7 +105,7 @@ Why not pandera or Great Expectations? They're the right tools for enforcing dat
 | `to_category(df, columns, max_unique)` | Repeated text labels (hospital, region) to pandas' category type |
 | `convert_types(df)` | Runs the three type conversions above with safe defaults (categories optional) |
 | `remove_duplicates(df, subset, keep)` | Drops duplicate rows, optionally judged on a subset of columns; kept rows keep their labels |
-| `fill_missing(df, numeric, categorical, columns, knn_features)` | Fills gaps: mean, median, zero or k-nearest-neighbours for numbers (columns scaled first; `knn_features` picks which columns judge similarity); most frequent value or "Missing" for text. Date gaps are left missing |
+| `fill_missing(df, numeric, categorical, columns, knn_features)` | Fills gaps: mean, median, zero or k-nearest-neighbours for numbers (needs the `knn` extra; columns scaled first, and `knn_features` picks which columns judge similarity); most frequent value or "Missing" for text. Date gaps are left missing |
 | `find_outliers(df, columns, method)` | True/False table of outliers by IQR or z-score |
 | `handle_outliers(df, columns, method, action)` | Removes outlier rows (the rest keep their labels), or caps values at the bounds and keeps the rows |
 | `winsorize(df, columns, lower, upper)` | Clips columns to percentiles (default 5th–95th) |
@@ -201,7 +205,7 @@ mypy           # type check
 ruff check .   # lint: style, import order, likely bugs
 ```
 
-The tests check every function, including that inputs are never modified, that every plot draws when values are missing, that report HTML escapes column names, and that the code `profile()` suggests actually runs. GitHub Actions runs the linter, the type check, the tests with coverage and every notebook on Python 3.10 and 3.13 for each push and pull request. See [CHANGELOG.md](CHANGELOG.md) for version history.
+The tests check every function, including that inputs are never modified, that every plot draws when values are missing, that report HTML escapes column names, and that the code `profile()` suggests actually runs. GitHub Actions runs the linter, the type check, the tests with coverage and every notebook on Python 3.10 and 3.13 for each push and pull request, and runs the tests again with the oldest versions of pandas, NumPy, matplotlib, SciPy and scikit-learn that dstoolkit says it supports. See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 ## Used in
 
