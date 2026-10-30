@@ -74,6 +74,18 @@ def _blocked(page):
     return page.evaluate("window.__csp || []")
 
 
+def _wait_for_status(page, text, timeout=120_000):
+    """Wait for the status line to show `text`; on failure, say what it showed and what was blocked.
+
+    (A selector rather than wait_for_function: the page's security policy blocks the eval() that uses.)
+    """
+    try:
+        page.locator("#status", has_text=text).wait_for(timeout=timeout)
+    except Exception as err:
+        raise AssertionError(f"status line: {page.inner_text('#status')!r}; blocked by the policy: "
+                             f"{_blocked(page)}; page errors: {page.errors}") from err
+
+
 def test_pinned_pyodide_matches_its_integrity_hash():
     # if jsDelivr ever served different bytes, the browser would refuse to run them;
     # this says so plainly (and gives the right hash when Pyodide is upgraded)
@@ -141,8 +153,7 @@ def test_excel_upload(page, tmp_path):
                   "age": [30 + i % 40 if i % 7 else None for i in range(60)],
                   "plan": ["Basic", "Plus", "Premium"] * 20}).to_excel(path, index=False)
     page.set_input_files("#file", str(path))
-    # a selector rather than wait_for_function: the page's security policy blocks the eval() that uses
-    page.locator("#status", has_text="clinic.xlsx: 60 rows").wait_for(timeout=120_000)
+    _wait_for_status(page, "clinic.xlsx: 60 rows")
     assert "plan" in page.inner_text("#plan")
     assert page.errors == []
     assert _blocked(page) == []     # openpyxl comes from the pinned Pyodide release, not PyPI
