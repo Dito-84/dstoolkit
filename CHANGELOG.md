@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Browser app:** the browser now enforces "your file never leaves this page" instead of relying on trust. See `app/README.md`:
+  - a Content-Security-Policy limits scripts and requests to the site itself and one pinned Pyodide release, with no inline scripts and no `eval`
+  - `pyodide.js` loads with an integrity hash
+  - Excel support is served from the site at pinned versions. Before, it was fetched from PyPI on each Excel upload: harmless, since only the package was downloaded, but it was a server the page didn't mention.
+  - The browser tests fail on any policy violation.
+- **Notebooks:** `learning/Data_Cleaning_Pipeline` now explains each step, from one-off charts to the packaged functions. The code is unchanged.
 - **Summaries can go to Python's `logging`.** Every one-line summary ("Filled missing values: age (263)") is now sent through the standard `logging` module, on the `"dstoolkit"` logger at INFO level. New `dst.set_message_output()`:
   - `"print"` (default) prints them exactly as before.
   - `"logging"` hands them to your application's logging setup, with its timestamps and format, wherever its logs go (a file, CloudWatch).
