@@ -15,6 +15,7 @@ or from its module: `dstoolkit.cleaning`, `dstoolkit.exploration`,
 """
 
 from . import cleaning, exploration, profiling, validation
+from ._messages import get_message_output, set_message_output
 from .cleaning import (
     add_age_column,
     clean,
@@ -51,4 +52,5 @@ from .validation import ColumnRule, Comparison, RuleResult, ValidationError, Val
 __version__ = "0.7.0"
 
 __all__ = ["cleaning", "exploration", "profiling", "validation", "__version__",
+           "set_message_output", "get_message_output",
            *cleaning.__all__, *exploration.__all__, *profiling.__all__, *validation.__all__]

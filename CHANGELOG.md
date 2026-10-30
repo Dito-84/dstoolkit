@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Summaries can go to Python's `logging`.** Every one-line summary ("Filled missing values: age (263)") is now sent through the standard `logging` module, on the `"dstoolkit"` logger at INFO level. New `dst.set_message_output()`:
+  - `"print"` (default) prints them exactly as before.
+  - `"logging"` hands them to your application's logging setup, with its timestamps and format, wherever its logs go (a file, CloudWatch).
+  - `"off"` silences them everywhere.
+  `verbose=False` still silences a single call. `show_eda()` still prints, because printing the summary is what it's for.
 - **scikit-learn is now optional.** It's only needed for `fill_missing(numeric="knn")`, so a plain install no longer pulls it in. Install `dstoolkit[knn]` (or scikit-learn itself) to use KNN filling; without it, `numeric="knn"` raises an error that says what to install. Nothing else changes.
 - **Development:** a new CI job runs the tests with the oldest supported versions (pandas 2.0, NumPy 1.24, matplotlib 3.10, SciPy 1.10, scikit-learn 1.3), so the minimums in `pyproject.toml` are tested rather than assumed.
 - **Development:** CI now lints with Ruff (style, import order, likely bugs, modern syntax) and measures test coverage, failing below 95% (currently about 97%). `pip install -e ".[dev]"` installs both. No change to how the package behaves.

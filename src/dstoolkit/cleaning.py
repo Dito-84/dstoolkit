@@ -19,7 +19,8 @@ Columns read in as text can be given proper types first:
     df = dst.convert_types(df)                  # yes/no -> True/False, date text -> dates
     df = dst.to_category(df, ["hospital"])      # repeated labels -> pandas category
 
-Pass `verbose=False` to any function to silence its summary message.
+Pass `verbose=False` to any function to silence its summary message, or use
+dst.set_message_output() to send every summary to Python's logging instead.
 """
 
 from __future__ import annotations
@@ -31,6 +32,8 @@ from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
+
+from ._messages import say as _say
 
 NumericFill = Literal["mean", "median", "knn", "zero"]
 CategoricalFill = Literal["most_frequent", "missing"]
@@ -75,11 +78,6 @@ YEAR_FIRST = re.compile(r"^\s*\d{4}[-/]")
 DateOrder = Literal["day_first", "month_first", "ambiguous", "conflict", "none"]
 
 DOB_NAME_HINTS = ("dob", "date_of_birth", "dateofbirth", "birth_date", "birthdate", "birthday")
-
-
-def _say(verbose: bool, message: str) -> None:
-    if verbose:
-        print(message)
 
 
 def _check_columns(df: pd.DataFrame, columns: Iterable[str]) -> None:
