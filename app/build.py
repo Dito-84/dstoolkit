@@ -2,7 +2,7 @@
 
     python app/build.py              # -> _site/
 
-The folder contains the page, the Python glue, a freshly built dstoolkit wheel
+The folder contains the page and its script, the Python glue, a freshly built dstoolkit wheel
 and the Titanic sample. Serve it locally with:
 
     python -m http.server --directory _site 8000
@@ -31,10 +31,11 @@ def build(out: Path) -> Path:
             sys.exit(f"Expected one dstoolkit wheel, found {wheels}")
         wheel = shutil.copy(wheels[0], out)
 
-    page = (APP / "index.html").read_text(encoding="utf-8")
-    if "__WHEEL__" not in page:
-        sys.exit("index.html is missing the __WHEEL__ placeholder")
-    (out / "index.html").write_text(page.replace("__WHEEL__", Path(wheel).name), encoding="utf-8")
+    script = (APP / "app.js").read_text(encoding="utf-8")
+    if "__WHEEL__" not in script:
+        sys.exit("app.js is missing the __WHEEL__ placeholder")
+    (out / "app.js").write_text(script.replace("__WHEEL__", Path(wheel).name), encoding="utf-8")
+    shutil.copy(APP / "index.html", out)
     shutil.copy(APP / "app_core.py", out)
     shutil.copy(ROOT / "data" / "titanic3.csv", out / "sample")
     (out / ".nojekyll").touch()  # serve files as-is on GitHub Pages
