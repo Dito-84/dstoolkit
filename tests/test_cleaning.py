@@ -4,6 +4,14 @@ import pytest
 
 import dstoolkit.cleaning as pp
 
+try:
+    import sklearn  # noqa: F401
+    HAS_SKLEARN = True
+except ImportError:
+    HAS_SKLEARN = False
+# KNN filling needs the optional scikit-learn extra (installed by ".[dev]" and in CI)
+needs_sklearn = pytest.mark.skipif(not HAS_SKLEARN, reason="needs scikit-learn (the knn extra)")
+
 
 @pytest.fixture
 def df():
@@ -72,6 +80,7 @@ def test_fill_missing_only_chosen_columns(df):
     assert out["income"].isna().sum() == 1
 
 
+@needs_sklearn
 def test_fill_missing_knn():
     d = pd.DataFrame({"x": [1.0, 2.0, 3.0, 10.0, 11.0], "y": [1.0, 2.0, np.nan, 10.0, 11.0]})
     out = pp.fill_missing(d, numeric="knn", n_neighbors=2, verbose=False)
@@ -274,6 +283,7 @@ def test_mean_fill_of_nullable_integers_switches_to_decimals(capsys):
     assert str(zero["x"].dtype) == "Int64" and zero["x"].tolist() == [1, 2, 0]
 
 
+@needs_sklearn
 def test_knn_survives_an_entirely_empty_column(capsys):
     # 0.6.0 crashed: "Shape of passed values is (3, 2), indices imply (3, 3)"
     df = pd.DataFrame({"a": [1.0, np.nan, 3.0], "b": [np.nan] * 3, "c": [1.0, 2.0, 3.0]})
@@ -283,6 +293,7 @@ def test_knn_survives_an_entirely_empty_column(capsys):
     assert "Left b empty" in capsys.readouterr().out
 
 
+@needs_sklearn
 def test_knn_puts_columns_on_the_same_scale():
     # Unscaled, income decides the neighbours: the missing age came from the
     # 21-year-old with a similar income rather than the 80-year-old who matches
@@ -294,6 +305,7 @@ def test_knn_puts_columns_on_the_same_scale():
     assert out.loc[3, "age"] == 20
 
 
+@needs_sklearn
 def test_knn_features_limits_what_counts_as_similar():
     df = pd.DataFrame({"patient_id": [1, 2, 3, 4], "height": [150.0, 190, 151, 189],
                        "weight": [50.0, 90, np.nan, np.nan]})
@@ -327,3 +339,13 @@ def test_add_age_reads_day_first_birth_dates_consistently():
     mixed = pd.DataFrame({"dob": ["13/02/1990", "02/13/1990"]})
     with pytest.raises(ValueError, match="mixes day-first and month-first"):
         pp.add_age_column(mixed)
+
+
+def test_knn_without_scikit_learn_says_what_to_install(monkeypatch):
+    # scikit-learn is an optional extra from 0.8.0; None in sys.modules makes the import fail
+    import sys
+    monkeypatch.setitem(sys.modules, "sklearn.impute", None)
+    df = pd.DataFrame({"a": [1.0, np.nan, 3.0], "b": [1.0, 2.0, 3.0]})
+    with pytest.raises(ImportError, match=r"dstoolkit\[knn\]"):
+        pp.fill_missing(df, numeric="knn")
+    pp.fill_missing(df, numeric="median", verbose=False)   # every other method works without it
