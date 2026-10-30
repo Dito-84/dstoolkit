@@ -31,8 +31,8 @@ notebooks = ["jupyter"]
 dev = ["pytest", "mypy", "pandas-stubs", "nbconvert", "nbclient", "ipykernel"]
 
 [project.urls]
-Repository = "https://github.com/Dito-84/Data_Science_Toolkit"
-Changelog = "https://github.com/Dito-84/Data_Science_Toolkit/blob/main/CHANGELOG.md"
+Repository = "https://github.com/Dito-84/dstoolkit"
+Changelog = "https://github.com/Dito-84/dstoolkit/blob/main/CHANGELOG.md"
 
 [tool.setuptools.dynamic]
 version = { attr = "dstoolkit.__version__" }
