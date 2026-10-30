@@ -141,8 +141,8 @@ def test_excel_upload(page, tmp_path):
                   "age": [30 + i % 40 if i % 7 else None for i in range(60)],
                   "plan": ["Basic", "Plus", "Premium"] * 20}).to_excel(path, index=False)
     page.set_input_files("#file", str(path))
-    page.wait_for_function("document.getElementById('status').innerText.includes('clinic.xlsx: 60 rows')",
-                           timeout=120_000)
+    # a selector rather than wait_for_function: the page's security policy blocks the eval() that uses
+    page.locator("#status", has_text="clinic.xlsx: 60 rows").wait_for(timeout=120_000)
     assert "plan" in page.inner_text("#plan")
     assert page.errors == []
     assert _blocked(page) == []     # openpyxl comes from the pinned Pyodide release, not PyPI
