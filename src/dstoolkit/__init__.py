@@ -11,7 +11,9 @@ Everything is available from the top level:
     dst.validate(df, {"age": {"min": 0, "max": 120}})
 
 or from its module: `dstoolkit.cleaning`, `dstoolkit.exploration`,
-`dstoolkit.profiling` and `dstoolkit.validation`.
+`dstoolkit.profiling` and `dstoolkit.validation`. The scikit-learn
+transformers (MissingFiller, OutlierCapper, CategoryEncoder, Scaler) are in
+`dstoolkit.transformers` and need the optional scikit-learn extra.
 """
 
 from . import cleaning, exploration, profiling, validation
@@ -49,7 +51,19 @@ from .exploration import (
 from .profiling import ColumnProfile, Profile, Suggestion, profile
 from .validation import ColumnRule, Comparison, RuleResult, ValidationError, ValidationReport, validate
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
+
+# The transformers need scikit-learn (an optional extra), so they're imported on
+# first use: `dst.Scaler` works when scikit-learn is installed, and `import
+# dstoolkit` never needs it.
+_TRANSFORMERS = ("MissingFiller", "OutlierCapper", "CategoryEncoder", "Scaler")
+
+
+def __getattr__(name: str) -> object:
+    if name in _TRANSFORMERS:
+        from . import transformers
+        return getattr(transformers, name)
+    raise AttributeError(f"module 'dstoolkit' has no attribute {name!r}")
 
 __all__ = ["cleaning", "exploration", "profiling", "validation", "__version__",
            "set_message_output", "get_message_output",

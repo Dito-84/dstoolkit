@@ -109,3 +109,15 @@ def test_switching_back_to_print_does_not_duplicate_messages(df, capsys):
 def test_unknown_output_raises():
     with pytest.raises(ValueError, match='"print", "logging" or "off"'):
         dst.set_message_output("stdout")
+
+
+def test_reloading_the_package_does_not_print_twice(df, capsys):
+    # notebooks often reload modules (importlib.reload, %autoreload); 0.8.0 development
+    # versions then attached a second print handler and printed every message twice
+    import importlib
+
+    import dstoolkit._messages as messages
+    importlib.reload(messages)
+    importlib.reload(dst)
+    dst.fill_missing(df)
+    assert capsys.readouterr().out.count("Filled missing values") == 1

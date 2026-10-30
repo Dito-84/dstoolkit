@@ -56,7 +56,7 @@ jobs:
       - name: Install the lowest allowed versions
         run: |
           pip install uv
-          uv pip install --system --resolution lowest-direct -e ".[knn]"
+          uv pip install --system --resolution lowest-direct -e ".[sklearn]"
           uv pip install --system pytest
           python -c "import pandas, numpy, matplotlib, scipy, sklearn; print('pandas', pandas.__version__, '| numpy', numpy.__version__, '| matplotlib', matplotlib.__version__, '| scipy', scipy.__version__, '| scikit-learn', sklearn.__version__)"
 

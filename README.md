@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Dito-84/dstoolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/Dito-84/dstoolkit/actions/workflows/ci.yml)
 
-**Data Science Toolkit**: a small, typed Python package for the first stages of a data project. It **profiles** a pandas DataFrame and suggests how to clean it, **cleans** it (duplicates, missing values, outliers, encoding, scaling), **validates** it against rules you write, and **explores** it (summary statistics, distribution plots, line fits). Every function returns a new DataFrame, so your raw data is never changed, and every function copes with missing values on its own.
+**Data Science Toolkit**: a small, typed Python package for the first stages of a data project. It **profiles** a pandas DataFrame and suggests how to clean it, **cleans** it (duplicates, missing values, outliers, encoding, scaling), **validates** it against rules you write, **explores** it (summary statistics, distribution plots, line fits), and **prepares it for models** with scikit-learn transformers that learn on training data only. Every function returns a new DataFrame, so your raw data is never changed, and every function copes with missing values on its own.
 
 ## Install
 
@@ -10,17 +10,17 @@
 pip install git+https://github.com/Dito-84/dstoolkit
 ```
 
-Requires Python 3.10+, with pandas, NumPy, matplotlib and SciPy. k-nearest-neighbours filling (`fill_missing(numeric="knn")`) also needs scikit-learn, which is optional:
+Requires Python 3.10+, with pandas, NumPy, matplotlib and SciPy. The [scikit-learn transformers](#transformers-for-machine-learning-dstoolkittransformers) and k-nearest-neighbours filling also need scikit-learn, which is optional:
 
 ```bash
-pip install "dstoolkit[knn] @ git+https://github.com/Dito-84/dstoolkit"
+pip install "dstoolkit[sklearn] @ git+https://github.com/Dito-84/dstoolkit"
 ```
 
 ## What it's for, and what it isn't
 
 dstoolkit is for **getting to know a dataset and cleaning it once**: profiling a new file, fixing types, checking it against rules, and preparing a clean copy for analysis or a dashboard. It's built to be safe by default: when a guess could damage data (reading 1/0 as True/False, swapping day and month, filling an ID column with its mean), it leaves the data alone or asks you to be explicit.
 
-It is **not** a modelling pipeline. Functions such as `fill_missing`, `normalize`, `encode_categorical` and `handle_outliers` learn their numbers (means, ranges, categories, outlier bounds) from the DataFrame you pass in, and there is no separate fit and transform step. Run them on a full dataset before splitting it, and information from the test rows leaks into training. For machine learning, split first and fit any preprocessing inside cross-validation (scikit-learn's `Pipeline` does this), the way the [Titanic project](https://github.com/Dito-84/titanic-survival-prediction) fills missing ages inside each fold. dstoolkit's profile and validation still help before and after.
+The cleaning functions (`fill_missing`, `normalize`, `encode_categorical`, `handle_outliers`) learn their numbers (means, ranges, categories, outlier bounds) from the DataFrame you pass in and apply them in the same call. That's right for exploring data, but **not before a model**: run them on a full dataset before splitting it, and information from the test rows leaks into training. For machine learning, use the [transformers](#transformers-for-machine-learning-dstoolkittransformers) instead. They learn on the training rows only and work inside a scikit-learn `Pipeline`, so cross-validation refits them on each fold.
 
 ## Profile a dataset in one call
 
@@ -106,6 +106,35 @@ dst.validate(stays, checks={
 
 Why not pandera or Great Expectations? They're the right tools for enforcing data contracts in production pipelines. `validate()` is for the exploration stage: it reports every failing row with examples instead of stopping at the first error, uses the same no-guessing rules as the rest of the toolkit, shows up in the same HTML report as the profile, and adds no dependencies. The rule format is experimental until 1.0.
 
+## Transformers for machine learning: `dstoolkit.transformers`
+
+The same cleaning steps, split into **fit** (learn from training data) and **transform** (apply to any data), following scikit-learn's rules. Needs the `sklearn` extra.
+
+```python
+from sklearn.pipeline import make_pipeline
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import StratifiedKFold, cross_val_score
+
+model = make_pipeline(
+    dst.MissingFiller(numeric="median", categorical="most_frequent"),
+    dst.OutlierCapper(columns=["fare"]),
+    dst.CategoryEncoder({"sex": "label", "embarked": "onehot"}, drop_original=True),
+    dst.Scaler({"age": "zscore", "fare": "zscore"}),
+    LogisticRegression(max_iter=1000),
+)
+folds = StratifiedKFold(5, shuffle=True, random_state=0)   # shuffle: titanic3.csv is sorted by class
+cross_val_score(model, X, y, cv=folds)   # cleaning is refitted on each training fold: no leakage
+```
+
+| Transformer | Learns in `fit()` | Applies in `transform()` |
+|---|---|---|
+| `MissingFiller(numeric, categorical, columns)` | Mean, median or zero for numbers; most frequent value or "Missing" for text (`fill_values_`) | Fills gaps with those values. Date gaps stay missing; no rows are dropped |
+| `OutlierCapper(columns, method, threshold)` | IQR or z-score bounds (`bounds_`) | Caps values at the bounds; rows are kept |
+| `CategoryEncoder(columns, handle_unknown, drop_original)` | The categories in each column (`categories_`) | One-hot or label codes for those categories. Unseen categories are ignored (zeros, or a missing label) or raise an error |
+| `Scaler(columns)` | Min and range, or mean and standard deviation (`stats_`) | Min-max or z-score scaling with the training numbers |
+
+On the data they were fitted on, they give the same results as `fill_missing`, `handle_outliers(action="cap")`, `encode_categorical` and `normalize`. They take and return DataFrames (they need column names; inside a `ColumnTransformer`, call `.set_output(transform="pandas")`), support `get_feature_names_out()`, and can be cloned and pickled like any scikit-learn transformer.
+
 ## Cleaning: `dstoolkit.cleaning`
 
 | Function | What it does |
@@ -115,7 +144,7 @@ Why not pandera or Great Expectations? They're the right tools for enforcing dat
 | `to_category(df, columns, max_unique)` | Repeated text labels (hospital, region) to pandas' category type |
 | `convert_types(df)` | Runs the three type conversions above with safe defaults (categories optional) |
 | `remove_duplicates(df, subset, keep)` | Drops duplicate rows, optionally judged on a subset of columns; kept rows keep their labels |
-| `fill_missing(df, numeric, categorical, columns, knn_features)` | Fills gaps: mean, median, zero or k-nearest-neighbours for numbers (needs the `knn` extra; columns scaled first, and `knn_features` picks which columns judge similarity); most frequent value or "Missing" for text. Date gaps are left missing |
+| `fill_missing(df, numeric, categorical, columns, knn_features)` | Fills gaps: mean, median, zero or k-nearest-neighbours for numbers (needs the `sklearn` extra; columns scaled first, and `knn_features` picks which columns judge similarity); most frequent value or "Missing" for text. Date gaps are left missing |
 | `find_outliers(df, columns, method)` | True/False table of outliers by IQR or z-score |
 | `handle_outliers(df, columns, method, action)` | Removes outlier rows (the rest keep their labels), or caps values at the bounds and keeps the rows |
 | `winsorize(df, columns, lower, upper)` | Clips columns to percentiles (default 5th–95th) |
@@ -195,6 +224,8 @@ src/dstoolkit/
     cleaning.py       duplicates, missing values, outliers, encoding, scaling, age
     profiling.py      profile() report and cleaning suggestions
     validation.py     validate() rules and checks
+    transformers.py   scikit-learn transformers (fit on training data, transform anything)
+    _messages.py      where the one-line summaries go (print, logging or off)
     exploration.py    summaries, distribution plots, line fits
     py.typed          marks the package as typed
 tests/                pytest suite
