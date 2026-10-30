@@ -61,6 +61,16 @@ dst.show_distribution_profile(df["age"], title="Passenger Age")
 
 Each cleaning step prints a one-line summary of what it changed; pass `verbose=False` to silence it. Apart from removing exact duplicate rows, `clean()` changes nothing you don't ask for, and rows keep their original labels (the index), so any row can be traced back to the raw data.
 
+### Messages and logging
+
+The summaries go through Python's standard `logging` (logger name `"dstoolkit"`, INFO level). By default they're simply printed, so nothing changes in notebooks. In a pipeline or a scheduled job, send them to your own logging setup instead, so they get timestamps and land wherever your logs go (a file, AWS CloudWatch from a Lambda function):
+
+```python
+import logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+dst.set_message_output("logging")   # or "print" (default), or "off" to silence everything
+```
+
 ## Validate against your own rules
 
 ```python

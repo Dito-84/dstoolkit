@@ -57,6 +57,8 @@ from typing import Any, Literal, TypedDict
 import numpy as np
 import pandas as pd
 
+from ._messages import say
+
 __all__ = ["validate", "ValidationReport", "RuleResult", "ColumnRule", "Comparison", "ValidationError"]
 
 TypeName = Literal["number", "integer", "text", "boolean", "datetime", "category"]
@@ -253,8 +255,7 @@ def validate(df: pd.DataFrame, rules: Mapping[Hashable, ColumnRule] | None = Non
         results.append(_compare(df, name, left, op, right))
 
     report = ValidationReport(len(df), df.index, results, max_examples)
-    if verbose:
-        print(report.message())
+    say(verbose, report.message())
     return report
 
 
