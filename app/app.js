@@ -5,6 +5,7 @@
 
 const PYODIDE_INDEX = "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/";
 const WHEEL = "__WHEEL__";            // filled in by app/build.py
+const EXCEL_WHEELS = "__EXCEL_WHEELS__".split(",");   // openpyxl and its dependency, served from this site
 const $ = id => document.getElementById(id);
 
 let py = null, core = null, ready = null, current = null, cleaned = null;
@@ -43,7 +44,8 @@ async function analyze(name, bytes) {
   try {
     if (/\.xlsx?m?$/i.test(name)) {
       setStatus("Loading Excel support…", { busy: true });
-      await py.pyimport("micropip").install("openpyxl");
+      const urls = EXCEL_WHEELS.map(w => new URL(w, location.href).href);
+      await py.pyimport("micropip").install.callKwargs(urls, { deps: false });
     }
     py.FS.writeFile("/tmp/upload", bytes);
     const result = JSON.parse(core.analyze_file(name, "/tmp/upload"));

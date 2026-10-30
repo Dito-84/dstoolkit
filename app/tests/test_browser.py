@@ -156,7 +156,7 @@ def test_excel_upload(page, tmp_path):
     _wait_for_status(page, "clinic.xlsx: 60 rows")
     assert "plan" in page.inner_text("#plan")
     assert page.errors == []
-    assert _blocked(page) == []     # openpyxl comes from the pinned Pyodide release, not PyPI
+    assert _blocked(page) == []     # openpyxl is served by the site itself, never fetched from PyPI
 
 
 def test_bad_file_shows_friendly_error(page, tmp_path):

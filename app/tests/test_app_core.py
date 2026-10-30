@@ -176,4 +176,7 @@ def test_build_fills_in_the_wheel_name(tmp_path):
                    capture_output=True)
     built = (tmp_path / "site" / "app.js").read_text(encoding="utf-8")
     assert "__WHEEL__" not in built and 'const WHEEL = "dstoolkit-' in built
+    assert "__EXCEL_WHEELS__" not in built and "wheels/openpyxl-3.1.5-" in built and "wheels/et_xmlfile-2.0.0-" in built
+    served = sorted(p.name.split("-")[0] for p in (tmp_path / "site" / "wheels").glob("*.whl"))
+    assert served == ["et_xmlfile", "openpyxl"]
     assert (tmp_path / "site" / "index.html").read_text(encoding="utf-8") == PAGE
