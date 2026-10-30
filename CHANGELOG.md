@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Development:** CI now lints with Ruff (style, import order, likely bugs, modern syntax) and measures test coverage, failing below 95% (currently about 97%). `pip install -e ".[dev]"` installs both. No change to how the package behaves.
+
 ## 0.7.0
 
 Fixes for problems found in a full review: several functions could change data in ways you wouldn't notice. Some defaults change, so this is a minor release rather than a patch.

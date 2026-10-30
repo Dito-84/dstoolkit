@@ -202,7 +202,7 @@ class ValidationReport:
 
     def _examples(self, r: RuleResult, limit: int) -> str:
         return "; ".join(f"row {self._index[pos]!r} = {_show(value)}"
-                         for pos, value in zip(r.rows[:limit], r.values[:limit]))
+                         for pos, value in zip(r.rows[:limit], r.values[:limit], strict=True))
 
     def _repr_html_(self) -> str:
         return f"<p>{_escape(self.message().splitlines()[0])}</p>" + self.summary().to_html(index=False)
@@ -395,13 +395,13 @@ def _compare(df: pd.DataFrame, name: str, left: Hashable, op: str, right: Hashab
             raise TypeError(f"Check {name!r}: the dates in {left!r} and {right!r} can't be compared; "
                             "give both a time zone or neither") from None
         failed = ~ok
-        pairs = list(zip(av[failed], bv[failed]))
+        pairs = list(zip(av[failed], bv[failed], strict=True))
         reasons = [f"{_show(x)} {op} {_show(y)} is false" for x, y in pairs]
     else:
-        found = [_compare_values(x, y, op) for x, y in zip(av, bv)]
+        found = [_compare_values(x, y, op) for x, y in zip(av, bv, strict=True)]
         failed = np.array([r is not None for r in found], dtype=bool)
         reasons = [r for r in found if r is not None]
-        pairs = [(x, y) for (x, y), bad in zip(zip(av, bv), failed) if bad]
+        pairs = [(x, y) for (x, y), bad in zip(zip(av, bv, strict=True), failed, strict=True) if bad]
     rows = both[failed]
     values: list[Any] = [(_plain(x), _plain(y)) for x, y in pairs]
     return RuleResult(name, "compare", expected, len(both), len(rows), rows=rows, values=values,

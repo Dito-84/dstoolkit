@@ -10,7 +10,6 @@ import pytest
 
 import dstoolkit as dst
 
-
 # ---------- to_boolean ----------
 
 def test_yes_no_in_any_case_becomes_true_false():
@@ -236,3 +235,10 @@ def test_profile_flags_mixed_order_dates_without_suggesting_a_conversion():
     notes = [s for s in report.suggestions if s.column == "visit"]
     assert any("mix day-first and month-first" in s.message for s in notes)
     assert "to_datetime" not in {s.action for s in notes}
+
+
+def test_mixed_order_examples_are_found_among_other_date_styles():
+    # only some values are day/month style; the rest are year-first or written out
+    df = pd.DataFrame({"d": ["2020-01-01", "13/02/2020", None, "02/13/2020", "Jan 5 2020"]})
+    with pytest.raises(ValueError, match="'13/02/2020' and '02/13/2020'"):
+        dst.to_datetime_columns(df, ["d"])

@@ -196,11 +196,12 @@ data/                 StudentData.csv, titanic3.csv
 git clone https://github.com/Dito-84/dstoolkit
 cd dstoolkit
 pip install -e ".[dev]"
-pytest    # the test suite
-mypy      # type check
+pytest --cov   # the test suite, with coverage (CI requires at least 95%)
+mypy           # type check
+ruff check .   # lint: style, import order, likely bugs
 ```
 
-The tests check every function, including that inputs are never modified, that every plot draws when values are missing, that report HTML escapes column names, and that the code `profile()` suggests actually runs. GitHub Actions runs the type check, the tests and every notebook on Python 3.10 and 3.13 for each push and pull request. See [CHANGELOG.md](CHANGELOG.md) for version history.
+The tests check every function, including that inputs are never modified, that every plot draws when values are missing, that report HTML escapes column names, and that the code `profile()` suggests actually runs. GitHub Actions runs the linter, the type check, the tests with coverage and every notebook on Python 3.10 and 3.13 for each push and pull request. See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 ## Used in
 

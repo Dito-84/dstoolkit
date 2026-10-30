@@ -2,12 +2,13 @@ import matplotlib
 
 matplotlib.use("Agg")  # draw off-screen so tests run without a display
 
+from pathlib import Path
+
 import matplotlib.pyplot as plt
-from matplotlib.figure import Figure
 import numpy as np
 import pandas as pd
 import pytest
-from pathlib import Path
+from matplotlib.figure import Figure
 
 import dstoolkit.exploration as toolkit
 

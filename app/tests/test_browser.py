@@ -8,7 +8,6 @@ CI runs it after `python app/build.py`:
 
 import functools
 import http.server
-import io
 import os
 import threading
 from pathlib import Path

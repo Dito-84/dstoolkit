@@ -31,22 +31,22 @@ from .cleaning import (
     to_datetime_columns,
     winsorize,
 )
-from .profiling import ColumnProfile, Profile, Suggestion, profile
-from .validation import ColumnRule, Comparison, RuleResult, ValidationError, ValidationReport, validate
 from .exploration import (
     add_passed,
     drop_nulls,
     fit_line,
+    show_counts,
     show_density,
     show_distribution,
     show_distribution_profile,
     show_eda,
     show_eda_table,
-    show_counts,
     show_grouped_box,
     show_histogram,
     show_scatter,
 )
+from .profiling import ColumnProfile, Profile, Suggestion, profile
+from .validation import ColumnRule, Comparison, RuleResult, ValidationError, ValidationReport, validate
 
 __version__ = "0.7.0"
 
