@@ -129,6 +129,8 @@ def test_pipeline_runs_and_keeps_learned_steps_inside_the_pipeline():
     assert "StratifiedKFold" in code and "scoring='roc_auc'" in code
     scope = run(code, df)
     assert 0.5 < scope["scores"].mean() <= 1.0
+    assert scope["baseline"].mean() == pytest.approx(0.5)              # ROC AUC of a constant guess
+    assert "from sklearn.dummy import DummyClassifier" in code
     assert list(scope["X"].columns) == ["age", "income", "plan", "smoker", "cost_text"]
 
 
@@ -155,6 +157,8 @@ def test_pipeline_for_regression_and_multiclass():
     assert "possible leaks" not in reg
     scores = run(reg, df.drop(columns="tier"))["scores"]                # negative RMSE
     assert -3.0 < scores.mean() < -1.5                                  # the noise in price is 2
+    assert run(reg, df.drop(columns="tier"))["baseline"].mean() < scores.mean()   # the average is worse
+    assert "DummyRegressor()" in reg
     multi = dst.profile(df.drop(columns="price"), charts=False, target="tier").pipeline()
     assert "scoring='balanced_accuracy'" in multi
     assert "astype('boolean').astype(float)" in multi

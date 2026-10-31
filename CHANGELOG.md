@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.1
+
+- **`report.pipeline()` scores a no-skill baseline** on the same folds (`DummyClassifier` or `DummyRegressor`), and prints it under the model's score. A score means little without it: on the Titanic, 79% accuracy sounds good until you know that always predicting "died" gets 62%.
+- **Clearer advice on swapping the model.** The script's comment said "swap in any scikit-learn model", but a model that can't handle blanks, such as logistic regression, would fail on the first blank. It now says to fill every column and add `dst.Scaler` first.
+
 ## 0.11.0
 
 Preparing a dataset for a model: the report now knows what the model will predict.
