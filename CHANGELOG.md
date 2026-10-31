@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.9.0
+
+Three features rebuilt from earlier 2023 drafts, rewritten from scratch to fix their flaws and follow dstoolkit's safe-by-default rules.
 
 - **New: `dst.associations(df)`** shows which columns are related: one row per pair, with the test, the strength, the p-value, the adjusted p-value and the number of rows used.
   - Two number columns: Pearson or Spearman. `method="auto"` uses Pearson only when both columns look normally distributed.
@@ -14,6 +16,13 @@
   - The mapping is `{"Female": ["f", "woman"], "Male": ["m", "man"]}`, or a list of labels when spellings only differ by case and spaces.
   - Matching ignores case and extra spaces. Missing values stay missing, and category columns stay category columns.
   - Values that match nothing are kept by default (`unmatched="missing"` or `"raise"` if you prefer), and the summary always lists them. The 2023 draft this replaces silently blanked any value it didn't recognise.
+- **New `format` rule in `validate()`:** `"us_zip"`, `"us_phone"` or `"email"`. It reports problems and never changes the data, and each failure says what's wrong:
+  - a 9-digit ZIP without its hyphen
+  - a ZIP stored as a number that lost its leading zero (2134 → 02134)
+  - a phone number with 7 digits, or an area code starting with 0 or 1
+  - an email with no @
+
+  It replaces the earlier ZIP and phone validator drafts, several of which replaced anything they didn't recognise with blanks.
 - **`profile()`** suggests `standardize_labels` when a category column has labels that differ only by case or spaces, and runs it before encoding in `report.code()`. Its encoding suggestion now counts categories after standardizing.
 
 ## 0.8.0

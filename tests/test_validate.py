@@ -647,3 +647,55 @@ def test_large_check_counts_are_exact():
     df = pd.DataFrame({"start": start, "end": end})
     report = run(df, checks={"order": ("end", ">=", "start")})
     assert report.summary()["failed"][0] == 1000
+
+
+# ---------- named formats (0.9.0) ----------
+
+def test_us_zip_format_explains_each_problem():
+    df = pd.DataFrame({"zip": ["33615", "33615-1234", "336151234", "2134", "abcde", None]})
+    report = dst.validate(df, {"zip": {"format": "us_zip"}}, verbose=False)
+    reasons = dict(zip(report.failures()["value"], report.failures()["reason"], strict=True))
+    assert reasons == {"336151234": "9 digits without the hyphen (ZIP+4 is written 12345-6789)",
+                       "2134": "4 digits: may have lost leading zeros",
+                       "abcde": "not a US ZIP code (12345 or 12345-6789)"}
+    assert report.summary().loc[0, "checked"] == 5          # missing values are skipped
+
+
+def test_zip_codes_stored_as_numbers_are_flagged_with_the_lost_zero():
+    df = pd.DataFrame({"zip": [2134, 33615]})
+    failures = dst.validate(df, {"zip": {"format": "us_zip"}}, verbose=False).failures()
+    assert failures["reason"].tolist() == [
+        "a number: looks like a ZIP code that lost its leading zero (02134)",
+        "a number, not text (ZIP codes stored as numbers lose leading zeros)"]
+    assert df["zip"].tolist() == [2134, 33615]               # nothing is converted or changed
+
+
+def test_us_phone_format():
+    ok = ["(813) 555-0142", "813-555-0142", "813.555.0142", "+1 813 555 0142", "1-813-555-0142", "8135550142"]
+    bad = {"055-555-0142": "area code can't start with 0 or 1",
+           "813-055-0142": "exchange (digits 4-6) can't start with 0 or 1",
+           "555-0142": "7 digits; a US phone number has 10",
+           "813/555/0142": "not a US phone number format"}
+    df = pd.DataFrame({"phone": ok + list(bad)})
+    failures = dst.validate(df, {"phone": {"format": "us_phone"}}, verbose=False).failures()
+    assert dict(zip(failures["value"], failures["reason"], strict=True)) == bad
+
+
+def test_email_format():
+    df = pd.DataFrame({"email": ["a@b.com", "first.last@example.org", "no-at.com", "a b@c.com", "x@y"]})
+    failures = dst.validate(df, {"email": {"format": "email"}}, verbose=False).failures()
+    assert failures["reason"].tolist() == ["no @", "contains spaces", "not an email address"]
+
+
+def test_unknown_format_raises_before_reading_data():
+    with pytest.raises(ValueError, match="format must be one of us_zip, us_phone, email, got 'zip' "
+                                         r"\(did you mean 'us_zip'\?\)"):
+        dst.validate(pd.DataFrame({"z": ["1"]}), {"z": {"format": "zip"}})
+
+
+def test_format_works_with_other_rules_and_in_the_profile():
+    df = pd.DataFrame({"zip": ["33615", "2134", None]})
+    rules = {"zip": {"required": True, "format": "us_zip"}}
+    report = dst.validate(df, rules, verbose=False)
+    assert report.summary()["rule"].tolist() == ["required", "format"]
+    assert dst.profile(df, charts=False, rules=rules).validation.failed_rules[1].rule == "format"
