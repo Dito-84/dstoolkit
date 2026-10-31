@@ -18,13 +18,18 @@ the returned figure from being shown a second time.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import TypeVar
+import itertools
+import warnings
+from collections.abc import Callable, Sequence
+from typing import Any, Literal, TypeVar
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+
+from ._messages import say
 
 __all__ = [
     "drop_nulls",
@@ -39,7 +44,10 @@ __all__ = [
     "show_counts",
     "show_grouped_box",
     "show_scatter",
+    "associations",
 ]
+
+CorrelationMethod = Literal["auto", "pearson", "spearman"]
 
 PandasData = TypeVar("PandasData", pd.Series, pd.DataFrame)
 
@@ -293,3 +301,189 @@ def show_scatter(x: pd.Series, y: pd.Series, size: pd.Series | None = None, tren
     fig.tight_layout()
     plt.show()
     return fig
+
+
+# ---------- associations between columns ----------
+
+ASSOCIATION_COLUMNS = ["column_1", "column_2", "kind", "test", "measure", "strength",
+                       "p_value", "p_adjusted", "n", "note"]
+
+
+def associations(df: pd.DataFrame, columns: Sequence[str] | None = None,
+                 method: CorrelationMethod = "auto", alpha: float = 0.05, min_strength: float = 0.3,
+                 significant_only: bool = True, max_categories: int = 50,
+                 verbose: bool = True) -> pd.DataFrame:
+    """Which columns are related, and how strongly: one row per pair of columns.
+
+    Each pair is tested once, on the rows where both values are present:
+      - two number columns: Pearson's r or Spearman's rho (-1 to 1)
+      - two category columns (text, category or True/False): chi-square test,
+        with Cramér's V as the strength (0 to 1, bias-corrected)
+      - a number and a category column: one-way ANOVA, with the correlation
+        ratio eta as the strength (0 to 1)
+
+    method: "auto" uses Pearson only when both columns look normally distributed
+            (Shapiro-Wilk up to 5,000 values, D'Agostino-Pearson above that) and
+            Spearman otherwise; or force "pearson" or "spearman"
+    alpha: significance level, applied after the Benjamini-Hochberg correction
+           for testing many pairs at once (the p_adjusted column)
+    min_strength: smallest strength to report (absolute value for r and rho)
+    significant_only: False returns every pair that could be tested
+    max_categories: text or category columns with more distinct values than this
+                    (names, IDs, free text) are left out
+
+    Date columns are left out. Notes flag results that need care, such as a
+    chi-square test with small expected counts.
+    """
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must be between 0 and 1")
+    if method not in ("auto", "pearson", "spearman"):
+        raise ValueError(f'method must be "auto", "pearson" or "spearman", got {method!r}')
+    names = list(df.columns) if columns is None else list(columns)
+    missing = [c for c in names if c not in df.columns]
+    if missing:
+        raise KeyError(f"Columns not found: {missing}")
+
+    kinds: dict[Any, str] = {}
+    skipped: list[str] = []
+    for name in names:
+        kind, why = _association_kind(df[name], max_categories)
+        if kind:
+            kinds[name] = kind
+        else:
+            skipped.append(f"{name} ({why})")
+
+    normal: dict[Any, bool] = {}
+    rows: list[dict[str, Any]] = []
+    for a, b in itertools.combinations(kinds, 2):
+        both = df[a].notna() & df[b].notna()          # pair rows first, then drop missing values
+        x, y = df.loc[both, a], df.loc[both, b]
+        if kinds[a] == kinds[b] == "numeric":
+            if method == "auto":
+                for name in (a, b):
+                    if name not in normal:
+                        normal[name] = _looks_normal(df[name].dropna())
+                use = "pearson" if normal[a] and normal[b] else "spearman"
+            else:
+                use = method
+            row = _numeric_pair(x.astype(float), y.astype(float), use)
+        elif kinds[a] == kinds[b] == "categorical":
+            row = _categorical_pair(x, y)
+        else:
+            values, groups = (x, y) if kinds[a] == "numeric" else (y, x)
+            row = _mixed_pair(values.astype(float), groups)
+        if row is not None:
+            rows.append({"column_1": a, "column_2": b, "n": int(both.sum()), **row})
+
+    result = pd.DataFrame(rows, columns=ASSOCIATION_COLUMNS)
+    if not result.empty:
+        result["p_adjusted"] = _benjamini_hochberg(result["p_value"].to_numpy(dtype=float))
+        result = result.iloc[result["strength"].abs().sort_values(ascending=False, kind="stable").index]
+    tested = len(result)
+    if significant_only and tested:
+        keep = (result["p_adjusted"] < alpha) & (result["strength"].abs() >= min_strength)
+        result = result[keep]
+    result = result.reset_index(drop=True)
+
+    shown = f"{len(result)} significant (adjusted p < {alpha:g}, strength at least {min_strength:g})" \
+        if significant_only else f"{len(result)} shown"
+    message = f"Tested {tested} pair(s) of columns; {shown}."
+    if skipped:
+        message += f" Left out: {', '.join(skipped)}."
+    say(verbose, message)
+    return result
+
+
+def _association_kind(series: pd.Series, max_categories: int) -> tuple[str | None, str]:
+    """("numeric" | "categorical" | None, why it was left out)."""
+    present = series.dropna()
+    if pd.api.types.is_datetime64_any_dtype(series) or pd.api.types.is_timedelta64_dtype(series):
+        return None, "dates"
+    if present.nunique() < 2:
+        return None, "fewer than 2 distinct values"
+    if pd.api.types.is_bool_dtype(series) or isinstance(series.dtype, pd.CategoricalDtype):
+        kind = "categorical"
+    elif pd.api.types.is_numeric_dtype(series):
+        return "numeric", ""
+    else:
+        kind = "categorical"
+    if present.nunique() > max_categories:
+        return None, f"{present.nunique():,} distinct values"
+    return kind, ""
+
+
+def _looks_normal(values: pd.Series) -> bool:
+    from scipy import stats
+    x = values.to_numpy(dtype=float)
+    if len(x) < 8 or np.ptp(x) == 0:
+        return False
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        p = stats.shapiro(x).pvalue if len(x) <= 5000 else stats.normaltest(x).pvalue
+    return bool(p > 0.05)
+
+
+def _numeric_pair(x: pd.Series, y: pd.Series, use: str) -> dict[str, Any] | None:
+    from scipy import stats
+    if len(x) < 3 or x.nunique() < 2 or y.nunique() < 2:
+        return None
+    if use == "pearson":
+        r, p = stats.pearsonr(x, y)
+        return {"kind": "numeric", "test": "Pearson", "measure": "r", "strength": float(r),
+                "p_value": float(p), "note": ""}
+    rho, p = stats.spearmanr(x, y)
+    return {"kind": "numeric", "test": "Spearman", "measure": "rho", "strength": float(rho),
+            "p_value": float(p), "note": ""}
+
+
+def _categorical_pair(x: pd.Series, y: pd.Series) -> dict[str, Any] | None:
+    from scipy import stats
+    table = pd.crosstab(x.astype(str), y.astype(str))
+    rows, cols = table.shape
+    n = int(table.to_numpy().sum())
+    if rows < 2 or cols < 2 or n < 3:
+        return None
+    chi2, p, _, expected = stats.chi2_contingency(table, correction=False)
+    # Cramér's V with Bergsma's bias correction, so small tables don't overstate the strength
+    phi2 = max(0.0, chi2 / n - (rows - 1) * (cols - 1) / (n - 1))
+    r_corr = rows - (rows - 1) ** 2 / (n - 1)
+    c_corr = cols - (cols - 1) ** 2 / (n - 1)
+    denominator = min(r_corr - 1, c_corr - 1)
+    v = float(np.sqrt(phi2 / denominator)) if denominator > 0 else 0.0
+    small = float((expected < 5).mean())
+    note = (f"{small:.0%} of expected counts are below 5, so the p-value is approximate"
+            if small > 0.2 else "")
+    return {"kind": "categorical", "test": "chi-square", "measure": "Cramér's V", "strength": v,
+            "p_value": float(p), "note": note}
+
+
+def _mixed_pair(values: pd.Series, groups: pd.Series) -> dict[str, Any] | None:
+    from scipy import stats
+    samples = [g.to_numpy() for _, g in values.groupby(groups.astype(str), sort=True)]
+    if len(samples) < 2 or len(values) <= len(samples):
+        return None
+    total = float(((values - values.mean()) ** 2).sum())
+    if total == 0:
+        return None
+    between = float(sum(len(s) * (s.mean() - values.mean()) ** 2 for s in samples))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        p = float(stats.f_oneway(*samples).pvalue)
+    if not np.isfinite(p):
+        return None
+    small = sum(len(s) < 5 for s in samples)
+    note = (f"{small} of {len(samples)} groups have fewer than 5 values, which inflates eta"
+            if small else "")
+    return {"kind": "mixed", "test": "ANOVA", "measure": "eta", "strength": float(np.sqrt(between / total)),
+            "p_value": p, "note": note}
+
+
+def _benjamini_hochberg(p: np.ndarray) -> np.ndarray:
+    """False-discovery-rate adjusted p-values for many tests at once."""
+    m = len(p)
+    order = np.argsort(p)
+    scaled = p[order] * m / np.arange(1, m + 1)
+    scaled = np.minimum.accumulate(scaled[::-1])[::-1]
+    adjusted = np.empty(m)
+    adjusted[order] = np.minimum(scaled, 1.0)
+    return adjusted
