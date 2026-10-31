@@ -41,6 +41,43 @@ The report covers the whole dataset (rows, duplicates, missing cells), every col
 
 [Download the full example report](docs/titanic_profile.html) (open it in a browser), or see the [`Profile_Titanic`](notebooks/Profile_Titanic.ipynb) notebook, which profiles the raw data, applies the suggested code and profiles the result.
 
+## Prepare for a model
+
+Name the column a model will predict, and the report checks the things to settle before training:
+
+```python
+report = dst.profile(raw, target="survived")
+report.target.leaks        # ['boat']: whether a lifeboat is listed predicts survival almost perfectly
+print(report.pipeline())   # a leak-free scikit-learn starter, ready to run
+```
+
+- **Class balance**, with a warning when the smallest class is under 10% of rows. The task is worked out from the target (text, True/False, or a few whole numbers mean classification); `task=` overrides it.
+- **How strongly each feature is related to the target**, from `associations()`.
+- **Possible leaks:** features almost perfectly related to the target, by value or by whether they're blank. On the Titanic, `boat` is blank for 99% of the people who died and filled in for 95% of those who survived: it was recorded after the sinking.
+- **Blanks related to the target**, such as missing ages, where filling the gap would hide information unless a flag column keeps it.
+- The target itself gets no fill, encoding or outlier advice; rows without a target are dropped.
+
+`report.pipeline()` turns the suggestions into a starter script. Steps that learn nothing from the data (type fixes, log transforms) run before the split. Steps that learn from it (fill values, outlier bounds, categories) go inside a scikit-learn `Pipeline` of dstoolkit transformers, so cross-validation refits them on each training fold. Leaks, identifiers and dates are left out of the features, with a comment saying why:
+
+```python
+# 2. Features and target
+# Left out (possible leaks: check they were known before the outcome): boat
+# Left out (suggested for dropping): cabin, body
+# Left out (identifiers or free text): name, ticket, home.dest
+X = df[['pclass', 'sex', 'age', 'sibsp', 'parch', 'fare', 'embarked']]
+y = df['survived']
+
+# 3. Steps that learn from the data: inside the pipeline, refitted on each training fold
+model = make_pipeline(
+    dst.MissingFiller(numeric='median', categorical=None, columns=['age', 'fare']),
+    dst.MissingFiller(categorical='most_frequent', numeric=None, columns=['embarked']),
+    dst.CategoryEncoder({'sex': 'label', 'embarked': 'onehot'}, drop_original=True),
+    HistGradientBoostingClassifier(random_state=0),   # accepts blanks; swap in any scikit-learn model
+)
+```
+
+It's a starting point to review, not a finished model: whether a flagged column really leaks, and which model to use, are your decisions.
+
 ## Clean in one call
 
 ```python
@@ -163,12 +200,14 @@ On the data they were fitted on, they give the same results as `fill_missing`, `
 
 | Function / method | What it does |
 |---|---|
-| `profile(df, title, charts, max_categories, missing_ok, rules, checks, related)` | Builds the report; `missing_ok` names columns where blank is meaningful (no fill/drop advice); `rules`/`checks` add a Validation section; `related=False` leaves out the Related columns section |
+| `profile(df, title, charts, max_categories, missing_ok, rules, checks, related, target, task)` | Builds the report; `missing_ok` names columns where blank is meaningful (no fill/drop advice); `rules`/`checks` add a Validation section; `related=False` leaves out the Related columns section; `target` adds a Target section (see [Prepare for a model](#prepare-for-a-model)) |
 | `report.save(path)` / `report.to_html()` | Self-contained HTML file or string |
 | `report.summary()` | One row per column: type, missing, unique values, outliers |
 | `report.suggestions` | The suggested steps as data (column, severity, message) |
-| `report.code(df_name)` | The suggested steps as runnable code, one call per kind of step |
+| `report.code(df_name)` | The suggested steps as runnable code, one call per kind of step. These functions learn from every row: use them for exploring, and `pipeline()` for models |
+| `report.pipeline(df_name)` | A leak-free modelling starter (needs `target`): stateless steps before the split, learned steps in a scikit-learn `Pipeline`, cross-validated |
 | `report.validation` | The `ValidationReport` when `rules` or `checks` were given, otherwise `None` |
+| `report.target` | A `TargetProfile` when `target` was given: `task`, `classes`, `features` (each feature vs the target), `missingness`, `leaks`, `untested` |
 | `report.associations` | The related pairs, as returned by `associations()`. `None` when `related=False`, or above 30 columns, where the number of pairs makes it slow (`report.associations_skipped` says why); call `associations()` on the columns you need instead |
 
 ## Validation: `dstoolkit.validation`
@@ -204,7 +243,7 @@ On the data they were fitted on, they give the same results as `fill_missing`, `
 | `show_grouped_box(df, value, by)` | A number compared across groups (e.g. length of stay by hospital), sorted by median, with group sizes |
 | `show_scatter(x, y, size, trend)` | Scatterplot, optionally with bubble sizes and a fitted trend line |
 | `fit_line(x, y)` | Least-squares line; returns slope, intercept and a `predict` function |
-| `associations(df, columns, method, alpha, min_strength)` | Which columns are related: one row per pair, tested once on the rows where both values are present. Pearson or Spearman for numbers, chi-square with Cramér's V for categories, ANOVA with eta for a number and a category. P-values are corrected for testing many pairs (Benjamini-Hochberg), and notes flag results that need care |
+| `associations(df, columns, method, alpha, min_strength, target)` | Which columns are related: one row per pair (or, with `target`, only the pairs that include it), tested once on the rows where both values are present. Pearson or Spearman for numbers, chi-square with Cramér's V for categories, ANOVA with eta for a number and a category. P-values are corrected for testing many pairs (Benjamini-Hochberg), and notes flag results that need care |
 | `drop_nulls(data)` | Copy of a Series/DataFrame with null rows removed |
 | `add_passed(df, grade_col, threshold)` | Adds a True/False column for values at or above a threshold |
 
