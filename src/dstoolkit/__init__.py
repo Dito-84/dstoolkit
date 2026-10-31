@@ -29,6 +29,7 @@ from .cleaning import (
     log_transform,
     normalize,
     remove_duplicates,
+    standardize_labels,
     to_boolean,
     to_category,
     to_datetime_columns,

@@ -31,7 +31,16 @@ import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
 
-from .cleaning import DATE_PATTERN, DOB_NAME_HINTS, _bounds, _date_order, _is_yes_no, _normalized, _parse_dates
+from .cleaning import (
+    DATE_PATTERN,
+    DOB_NAME_HINTS,
+    _bounds,
+    _date_order,
+    _is_yes_no,
+    _normalized,
+    _parse_dates,
+    _standard_spellings,
+)
 from .validation import ColumnRule, Comparison, ValidationReport, validate
 
 __all__ = ["profile", "Profile", "ColumnProfile", "Suggestion"]
@@ -164,6 +173,9 @@ class Profile:
             elif action == "encode":
                 mapping = ", ".join(f"{i.column!r}: {i.options['method']!r}" for i in items)
                 lines.append(f"{d} = dst.encode_categorical({d}, {{{mapping}}})")
+            elif action == "standardize":
+                lines += [f"{d} = dst.standardize_labels({d}, {i.column!r}, {list(i.options['labels'])!r})"
+                          for i in items]
             elif action == "add_age":
                 lines += [f"{d} = dst.add_age_column({d}, dob_column={i.column!r})" for i in items]
 
@@ -176,7 +188,7 @@ class Profile:
             lines.insert(first, f"{d} = dst.encode_categorical({d}, {{{merged}}})")
 
         # type conversions first, so later steps see True/False and dates rather than text
-        conversions = ("dst.to_boolean(", "dst.to_datetime_columns(", "pd.to_numeric(")
+        conversions = ("dst.to_boolean(", "dst.to_datetime_columns(", "pd.to_numeric(", "dst.standardize_labels(")
         lines = [line for line in lines if any(c in line for c in conversions)] + \
                 [line for line in lines if not any(c in line for c in conversions)]
 
@@ -509,14 +521,20 @@ def _profile_column(series: pd.Series, name: str, charts: bool, max_categories: 
         elif kind == "categorical" and _is_yes_no(series):
             suggest("type", "medium", "Yes/No answers stored as text; convert to True/False.", "to_boolean")
         elif kind == "categorical" and not numeric_text:  # True/False columns need no encoding
-            if col.unique <= 2:
+            labels, variants = _standard_spellings(values)
+            if variants:
+                suggest("type", "medium", f"{variants} label(s) are written more than one way (differing only in "
+                        f"case or spaces), so they're counted as different values; standardize them first.",
+                        "standardize", labels=tuple(labels))
+            categories = len(labels)    # after standardizing, "Male" and "male " are one category
+            if categories <= 2:
                 suggest("encode", "low", "Two categories; label-encode as 0/1 for modeling.", "encode",
                         method="label")
-            elif col.unique <= 10:
-                suggest("encode", "low", f"{col.unique} categories; one-hot encode for modeling.", "encode",
+            elif categories <= 10:
+                suggest("encode", "low", f"{categories} categories; one-hot encode for modeling.", "encode",
                         method="onehot")
             else:
-                suggest("encode", "low", f"{col.unique} categories; label-encode, or group rare ones "
+                suggest("encode", "low", f"{categories} categories; label-encode, or group rare ones "
                         f"before one-hot encoding.", "encode", method="label")
 
         if 0 < share < MOSTLY_EMPTY and kind == "boolean" and share >= 0.05:

@@ -39,6 +39,7 @@ NumericFill = Literal["mean", "median", "knn", "zero"]
 CategoricalFill = Literal["most_frequent", "missing"]
 OutlierMethod = Literal["iqr", "zscore"]
 OutlierAction = Literal["remove", "cap"]
+UnmatchedLabels = Literal["keep", "missing", "raise"]
 Encoding = Literal["onehot", "label"]
 Scaling = Literal["minmax", "zscore"]
 StepOptions = bool | Mapping[str, Any] | None
@@ -47,6 +48,7 @@ __all__ = [
     "to_boolean",
     "to_datetime_columns",
     "to_category",
+    "standardize_labels",
     "convert_types",
     "remove_duplicates",
     "fill_missing",
@@ -340,6 +342,113 @@ def convert_types(df: pd.DataFrame, booleans: bool = True, dates: bool = True, c
     if categories:
         result = to_category(result, verbose=verbose)
     return result
+
+
+# ---------- labels ----------
+
+def _label_key(value: Any) -> str:
+    """How labels are compared: case, surrounding spaces and repeated spaces don't matter."""
+    return re.sub(r"\s+", " ", str(value).strip()).lower()
+
+
+def _standard_spellings(values: pd.Series) -> tuple[list[str], int]:
+    """(one spelling per label, how many labels are written more than one way).
+
+    The spelling kept for each label is its most common one.
+    """
+    present = values.dropna().astype(str)
+    spellings: dict[str, Any] = {}
+    variants = 0
+    for _, group in present.groupby(present.map(_label_key), sort=True):
+        counts = group.value_counts()
+        spellings[_label_key(counts.index[0])] = counts.index[0]
+        variants += len(counts) > 1
+    return sorted(spellings.values(), key=str), variants
+
+
+def standardize_labels(df: pd.DataFrame, columns: str | Sequence[str],
+                       mapping: Mapping[str, str | Sequence[str]] | Sequence[str],
+                       unmatched: UnmatchedLabels = "keep", verbose: bool = True) -> pd.DataFrame:
+    """Replace the different spellings of a label with one standard spelling.
+
+        dst.standardize_labels(df, "sex", {"Female": ["f", "woman"], "Male": ["m", "man"]})
+        dst.standardize_labels(df, "region", ["North", "South"])   # only case and spaces differ
+
+    columns: the text or category column(s) to clean
+    mapping: {standard label: the other spellings that mean it}, or a list of
+             standard labels when the spellings only differ by case and spaces.
+             Matching ignores case and extra spaces, and every standard label
+             also matches itself, so "female " and "FEMALE" become "Female".
+    unmatched: what to do with a value that matches nothing:
+               "keep" (default) leaves it as it is, "missing" makes it missing,
+               "raise" stops with an error. The summary always lists them, so
+               a value is never changed or dropped without being reported.
+
+    Missing values stay missing. Category columns stay category columns.
+    """
+    names = [columns] if isinstance(columns, str) else list(columns)
+    _check_columns(df, names)
+    if unmatched not in ("keep", "missing", "raise"):
+        raise ValueError(f'unmatched must be "keep", "missing" or "raise", got {unmatched!r}')
+    lookup = _label_lookup(mapping)
+
+    result = df.copy()
+    notes = []
+    for col in names:
+        series = result[col]
+        if not (_is_text(series) or isinstance(series.dtype, pd.CategoricalDtype)):
+            raise TypeError(f"{col!r} holds {series.dtype} values, not text labels; for 1/0 or "
+                            f"yes/no answers use to_boolean()")
+        present = series.notna()
+        keys = series[present].map(_label_key)
+        new = keys.map(lookup)
+        no_match = new.isna()
+        unknown = series[present][no_match]
+        if len(unknown) and unmatched == "raise":
+            raise ValueError(f"{col!r} has values that match no label: {_counts(unknown)}")
+        values = series.astype(object).copy()
+        values[new[~no_match].index] = new[~no_match]
+        if unmatched == "missing":
+            values[unknown.index] = None
+        relabeled = int((values[present].astype(str) != series[present].astype(str)).sum()) \
+            - (len(unknown) if unmatched == "missing" else 0)
+        if isinstance(series.dtype, pd.CategoricalDtype):
+            values = values.astype("category")
+        elif pd.api.types.is_string_dtype(series.dtype) and not pd.api.types.is_object_dtype(series.dtype):
+            values = values.astype(series.dtype)
+        result[col] = values
+        note = f"{col!r}: {relabeled} value(s) relabeled"
+        if len(unknown):
+            what = "made missing" if unmatched == "missing" else "left as they were"
+            note += f"; {len(unknown)} matched no label and were {what}: {_counts(unknown)}"
+        notes.append(note)
+    _say(verbose, "Standardized labels. " + "; ".join(notes) + ".")
+    return result
+
+
+def _label_lookup(mapping: Mapping[str, str | Sequence[str]] | Sequence[str]) -> dict[str, Any]:
+    """{normalized spelling: standard label}; mistakes in the mapping raise before any data is read."""
+    if isinstance(mapping, str):
+        raise TypeError("mapping must be a {standard label: spellings} dict or a list of labels, not one string")
+    pairs = mapping.items() if isinstance(mapping, Mapping) else ((label, []) for label in mapping)
+    lookup: dict[str, Any] = {}
+    for label, spellings in pairs:
+        if spellings is None or isinstance(spellings, str):
+            spellings = [] if spellings is None else [spellings]
+        for spelling in [label, *spellings]:
+            key = _label_key(spelling)
+            if lookup.get(key, label) != label:
+                raise ValueError(f"{spelling!r} is listed for both {lookup[key]!r} and {label!r}")
+            lookup[key] = label
+    if not lookup:
+        raise ValueError("mapping is empty")
+    return lookup
+
+
+def _counts(values: pd.Series, limit: int = 5) -> str:
+    counts = values.astype(str).value_counts()
+    shown = ", ".join(f"{k!r} ({v})" for k, v in counts.head(limit).items())
+    return shown + (f" and {len(counts) - limit} more" if len(counts) > limit else "")
 
 
 # ---------- duplicates ----------
