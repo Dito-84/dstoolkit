@@ -201,12 +201,25 @@ On the data they were fitted on, they give the same results as `fill_missing`, `
 | `show_grouped_box(df, value, by)` | A number compared across groups (e.g. length of stay by hospital), sorted by median, with group sizes |
 | `show_scatter(x, y, size, trend)` | Scatterplot, optionally with bubble sizes and a fitted trend line |
 | `fit_line(x, y)` | Least-squares line; returns slope, intercept and a `predict` function |
+| `associations(df, columns, method, alpha, min_strength)` | Which columns are related: one row per pair, tested once on the rows where both values are present. Pearson or Spearman for numbers, chi-square with Cramér's V for categories, ANOVA with eta for a number and a category. P-values are corrected for testing many pairs (Benjamini-Hochberg), and notes flag results that need care |
 | `drop_nulls(data)` | Copy of a Series/DataFrame with null rows removed |
 | `add_passed(df, grade_col, threshold)` | Adds a True/False column for values at or above a threshold |
 
 Every chart function returns its matplotlib figure, so it can be saved with `fig.savefig("chart.png")`. In Jupyter, end the line with `;` (or assign the result) so the returned figure isn't shown twice.
 
 Every function is also available directly from `dstoolkit`, as in the quick start.
+
+### Which columns are related?
+
+```python
+dst.associations(raw)
+# Tested 43 pair(s) of columns; 16 significant (adjusted p < 0.05, strength at least 0.3). Left out: name (1,307 distinct values), ...
+#   column_1  column_2  kind     test      measure  strength  p_value  p_adjusted  n     note
+#   pclass    fare      numeric  Spearman  rho      -0.71     ...      ...         1308
+#   survived  sex       mixed    ANOVA     eta       0.53     ...      ...         1309
+```
+
+Each pair is tested on the rows where both values are present, so missing values never pair one row's value with another's. With many pairs, some look significant by chance, so `p_adjusted` corrects for the number of tests. `significant_only=False` returns every pair.
 
 ## Notebooks
 

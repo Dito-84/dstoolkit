@@ -36,6 +36,7 @@ from .cleaning import (
 )
 from .exploration import (
     add_passed,
+    associations,
     drop_nulls,
     fit_line,
     show_counts,
