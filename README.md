@@ -72,9 +72,11 @@ model = make_pipeline(
     dst.MissingFiller(numeric='median', categorical=None, columns=['age', 'fare']),
     dst.MissingFiller(categorical='most_frequent', numeric=None, columns=['embarked']),
     dst.CategoryEncoder({'sex': 'label', 'embarked': 'onehot'}, drop_original=True),
-    HistGradientBoostingClassifier(random_state=0),   # accepts blanks; swap in any scikit-learn model
+    HistGradientBoostingClassifier(random_state=0),   # accepts blanks and needs no scaling
 )
 ```
+
+It ends by scoring a no-skill baseline on the same folds, so the result has something to beat: on the Titanic, ROC AUC 0.856 against 0.500 for always guessing the most common class. The model accepts blanks and needs no scaling; the script says what to add before swapping in one that doesn't, such as logistic regression.
 
 It's a starting point to review, not a finished model: whether a flagged column really leaks, and which model to use, are your decisions.
 
@@ -205,7 +207,7 @@ On the data they were fitted on, they give the same results as `fill_missing`, `
 | `report.summary()` | One row per column: type, missing, unique values, outliers |
 | `report.suggestions` | The suggested steps as data (column, severity, message) |
 | `report.code(df_name)` | The suggested steps as runnable code, one call per kind of step. These functions learn from every row: use them for exploring, and `pipeline()` for models |
-| `report.pipeline(df_name)` | A leak-free modelling starter (needs `target`): stateless steps before the split, learned steps in a scikit-learn `Pipeline`, cross-validated |
+| `report.pipeline(df_name)` | A leak-free modelling starter (needs `target`): stateless steps before the split, learned steps in a scikit-learn `Pipeline`, cross-validated against a no-skill baseline |
 | `report.validation` | The `ValidationReport` when `rules` or `checks` were given, otherwise `None` |
 | `report.target` | A `TargetProfile` when `target` was given: `task`, `classes`, `features` (each feature vs the target), `missingness`, `leaks`, `untested` |
 | `report.associations` | The related pairs, as returned by `associations()`. `None` when `related=False`, or above 30 columns, where the number of pairs makes it slow (`report.associations_skipped` says why); call `associations()` on the columns you need instead |

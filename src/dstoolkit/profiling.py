@@ -243,7 +243,8 @@ class Profile:
         each training fold. Possible leaks, identifiers, dates and columns
         suggested for dropping are left out of the features, with a comment
         saying why. The model is a histogram gradient-boosting model, which
-        accepts the remaining blanks; swap in any scikit-learn model.
+        accepts the remaining blanks and needs no scaling. A no-skill baseline is
+        scored on the same folds, so the result has something to beat.
         """
         t = self.target
         if t is None:
@@ -297,7 +298,9 @@ class Profile:
             steps.append(f"dst.CategoryEncoder({encodings!r}, drop_original=True),")
         classify = t.task == "classification"
         model = "HistGradientBoostingClassifier" if classify else "HistGradientBoostingRegressor"
-        steps.append(f"{model}(random_state=0),   # accepts blanks; swap in any scikit-learn model")
+        dummy = "DummyClassifier" if classify else "DummyRegressor"
+        guess = "the most common class" if classify else "the average"
+        steps.append(f"{model}(random_state=0),   # accepts blanks and needs no scaling")
 
         if not classify:
             folds, scoring = "KFold(5, shuffle=True, random_state=0)", "neg_root_mean_squared_error"
@@ -311,6 +314,7 @@ class Profile:
                     ("categories with no encoding suggested", unencoded)]
         lines = [*(["import pandas as pd"] if any("pd." in line for line in before) else []),
                  "import dstoolkit as dst",
+                 f"from sklearn.dummy import {dummy}",
                  f"from sklearn.ensemble import {model}",
                  f"from sklearn.model_selection import {'StratifiedKFold' if classify else 'KFold'}, cross_val_score",
                  "from sklearn.pipeline import make_pipeline", "",
@@ -330,10 +334,15 @@ class Profile:
                 lines.append(f"# Left out ({why}): {', '.join(fresh)}")
         lines += [f"X = {d}[{features!r}]", f"y = {d}[{t.name!r}]", "",
                   "# 3. Steps that learn from the data: inside the pipeline, refitted on each training fold",
+                  "# To use a model that can't handle blanks (e.g. LogisticRegression): fill every column,",
+                  "# and add dst.Scaler(...) before a linear or distance-based model",
                   "model = make_pipeline(", *[f"    {step}" for step in steps], ")", "",
                   f"folds = {folds}",
                   f"scores = cross_val_score(model, X, y, cv=folds, scoring={scoring!r})",
-                  f'print(f"{scoring}: {{scores.mean():.3f}} ± {{scores.std():.3f}}")']
+                  f"baseline = cross_val_score({dummy}(), X, y, cv=folds, scoring={scoring!r})   "
+                  f"# always predicts {guess}",
+                  f'print(f"model:    {scoring} {{scores.mean():.3f}} ± {{scores.std():.3f}}")',
+                  f'print(f"baseline: {scoring} {{baseline.mean():.3f}}   (no skill: the score to beat)")']
         return "\n".join(lines)
 
     # ----- HTML -----
