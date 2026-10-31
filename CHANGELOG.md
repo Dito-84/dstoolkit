@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.11.0
+
+Preparing a dataset for a model: the report now knows what the model will predict.
+
+- **New: `profile(df, target="column")`** adds a Target section:
+  - **Task and class balance.** The task is classification for text, True/False, or whole-number targets with at most 10 values, and regression otherwise; `task=` overrides it. An imbalance warning appears when the smallest class is under 10% of rows.
+  - **Each feature's relation to the target**, from `associations()`, tested on the rows where both are present.
+  - **Possible leaks:** features almost perfectly related to the target (strength 0.9 or more), by value or by whether they're blank. On the Titanic this flags `boat`. Leaks are reported, never dropped by the cleaning code.
+  - **Blanks related to the target** (strength 0.1 or more), with the line of code that keeps them as a flag column if they were known before the outcome.
+  - The target itself gets no fill, encoding or outlier advice. Rows without a target get a suggestion to drop them, and `code()` writes `df.dropna(subset=[target])`.
+  - `report.target` holds it all as a `TargetProfile`.
+- **New: `report.pipeline()`** writes a leak-free modelling starter. Steps that learn nothing from the data (duplicates, type fixes, log transforms) run before the split. Steps that learn from it (`MissingFiller`, `OutlierCapper`, `CategoryEncoder`) go inside a scikit-learn `Pipeline`, cross-validated with shuffled folds (stratified for classes) and a suitable metric. Possible leaks, identifiers, dates and dropped columns are left out of the features, with a comment saying why. Flags for informative blanks are written as comments, because only you know whether a blank was known before the outcome.
+- **New: `associations(df, target=...)`** tests only the pairs that include that column, with the p-value correction over just those pairs.
+- **Fixed: bad encoding advice.** For text columns with more than 10 categories, `profile()` suggested label codes. Numbering unordered categories invents an order that linear and distance-based models take literally. It now suggests one-hot encoding, grouping rare categories first, and says label codes suit tree-based models only. The `encode_categorical()` warning for many one-hot columns says the same.
+- The `Profile_Titanic` notebook has a "Prepare for a model" section, including a leak the statistics can't catch (`body`). The example report in `docs/` includes the Target section.
+
 ## 0.10.0
 
 - **New: a "Related columns" section in `profile()`.** It lists the pairs of columns of any type that are related, from `associations()` with its defaults: Pearson or Spearman for two number columns, chi-square with Cramér's V for two category columns, and ANOVA with eta for one of each. Until now the report only showed Pearson correlations between number columns, so a relation between, say, sex and survival didn't appear.

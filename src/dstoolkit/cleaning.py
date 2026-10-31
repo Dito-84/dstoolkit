@@ -724,7 +724,8 @@ def encode_categorical(df: pd.DataFrame, columns: Mapping[str, Encoding] | Seque
             dummies = pd.get_dummies(df[col], prefix=col, dtype=int)
             if dummies.shape[1] > onehot_limit:
                 warnings.warn(f"One-hot encoding {col!r} adds {dummies.shape[1]} columns; "
-                              f"consider 'label' encoding instead.", stacklevel=2)
+                              f"consider grouping rare categories first ('label' codes suit tree-based "
+                              f"models only, because they imply an order).", stacklevel=2)
             at = _position(result, col) + 1
             for offset, name in enumerate(dummies.columns):
                 result.insert(at + offset, name, dummies[name])

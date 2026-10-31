@@ -15,6 +15,11 @@ suggested cleaning code.
 
     report.associations         # related columns of any type (see dst.associations)
 
+    # preparing for a model: name what it will predict
+    report = dst.profile(df, target="survived")
+    report.target.leaks         # columns that may give the answer away
+    print(report.pipeline())    # a leak-free scikit-learn starter, ready to run
+
 The report never changes the DataFrame it describes.
 """
 
@@ -46,10 +51,11 @@ from .cleaning import (
 from .exploration import associations as _associations
 from .validation import ColumnRule, Comparison, ValidationReport, validate
 
-__all__ = ["profile", "Profile", "ColumnProfile", "Suggestion"]
+__all__ = ["profile", "Profile", "ColumnProfile", "Suggestion", "TargetProfile"]
 
 Kind = Literal["numeric", "categorical", "boolean", "datetime", "text", "empty"]
 Severity = Literal["high", "medium", "low"]
+Task = Literal["classification", "regression"]
 
 MOSTLY_EMPTY = 0.60          # share missing above which a column is suggested for dropping
 OUTLIER_SHARE_TO_CAP = 0.01  # share of outliers above which capping is suggested
@@ -61,6 +67,10 @@ TEXT_MIN_RATIO = 0.2         # ...and this share of distinct values are treated 
 HIGH_CORRELATION = 0.9
 RELATED_MAX_COLUMNS = 30     # above this, the related-columns section is skipped (pairs grow with the square)
 RELATED_ROWS_SHOWN = 20      # pairs listed in the HTML; report.associations has them all
+LEAK_STRENGTH = 0.9          # a feature this strongly related to the target may give the answer away
+MISSING_SIGNAL = 0.1         # blanks related to the target at least this strongly are worth a flag
+IMBALANCE_SHARE = 0.10       # smallest class below this share: the target is imbalanced
+CLASSIFICATION_MAX_VALUES = 10  # a numeric target with at most this many whole-number values is a class label
 
 # Order suggested steps are applied in, matching dst.clean()
 STEP_ORDER = {"duplicates": 0, "drop": 1, "type": 2, "missing": 3, "outliers": 4, "transform": 5,
@@ -109,6 +119,19 @@ class ColumnProfile:
         return f"{label} (expected)" if self.missing_expected and self.missing else label
 
 
+@dataclass
+class TargetProfile:
+    """What the report found about the column a model will predict (profile(target=...))."""
+    name: str
+    task: Task
+    missing: int
+    classes: pd.Series | None      # rows per class (classification only), largest first
+    features: pd.DataFrame         # every testable feature vs the target, strongest first
+    missingness: pd.DataFrame      # features whose blanks are related to the target
+    leaks: list[str]               # features that may give the answer away
+    untested: list[str]            # features associations() couldn't test (IDs, dates, ...)
+
+
 class Profile:
     """A dataset report. Display it in Jupyter, save it as HTML, or read its parts."""
 
@@ -117,7 +140,8 @@ class Profile:
                  correlation_chart: str | None, suggestions: list[Suggestion],
                  validation: ValidationReport | None = None,
                  associations: pd.DataFrame | None = None,
-                 associations_skipped: str | None = None) -> None:
+                 associations_skipped: str | None = None,
+                 target: TargetProfile | None = None) -> None:
         self.title = title
         self.n_rows = n_rows
         self.n_columns = n_columns
@@ -131,6 +155,7 @@ class Profile:
         self.validation = validation
         self.associations = associations
         self.associations_skipped = associations_skipped
+        self.target = target
 
     # ----- data views -----
 
@@ -148,8 +173,13 @@ class Profile:
 
         suggestions: only include these (e.g. the ones a user ticked); default all.
         """
-        d = df_name
         chosen = self.suggestions if suggestions is None else list(suggestions)
+        lines = self._code_lines(df_name, chosen)
+        header = ["import pandas as pd"] if any("pd." in line for line in lines) else []
+        header += ["import dstoolkit as dst", ""]
+        return "\n".join(header + (lines or ["# No cleaning steps suggested"]))
+
+    def _code_lines(self, d: str, chosen: list[Suggestion]) -> list[str]:
         groups: dict[tuple[str, tuple[tuple[str, Any], ...]], list[Suggestion]] = {}
         for s in chosen:
             if s.action:
@@ -187,6 +217,8 @@ class Profile:
                           for i in items]
             elif action == "add_age":
                 lines += [f"{d} = dst.add_age_column({d}, dob_column={i.column!r})" for i in items]
+            elif action == "drop_missing_target":
+                lines.append(f"{d} = {d}.dropna(subset=[{items[0].column!r}])")
 
         # one encode call is easier to read than one per method
         encodes = [line for line in lines if "dst.encode_categorical(" in line]
@@ -198,12 +230,111 @@ class Profile:
 
         # type conversions first, so later steps see True/False and dates rather than text
         conversions = ("dst.to_boolean(", "dst.to_datetime_columns(", "pd.to_numeric(", "dst.standardize_labels(")
-        lines = [line for line in lines if any(c in line for c in conversions)] + \
-                [line for line in lines if not any(c in line for c in conversions)]
+        return [line for line in lines if any(c in line for c in conversions)] + \
+               [line for line in lines if not any(c in line for c in conversions)]
 
-        header = ["import pandas as pd"] if any("pd." in line for line in lines) else []
-        header += ["import dstoolkit as dst", ""]
-        return "\n".join(header + (lines or ["# No cleaning steps suggested"]))
+    def pipeline(self, df_name: str = "df") -> str:
+        """A leak-free modelling starter as runnable Python: needs profile(target=...).
+
+        Steps that learn nothing from the data (type fixes, log transforms,
+        dropping rows without a target) run before the split. Steps that learn
+        from it (fill values, outlier bounds, categories) go in a scikit-learn
+        Pipeline of dstoolkit transformers, so cross-validation refits them on
+        each training fold. Possible leaks, identifiers, dates and columns
+        suggested for dropping are left out of the features, with a comment
+        saying why. The model is a histogram gradient-boosting model, which
+        accepts the remaining blanks; swap in any scikit-learn model.
+        """
+        t = self.target
+        if t is None:
+            raise ValueError("pipeline() needs to know what the model predicts: profile(df, target='column')")
+        d = df_name
+        kinds = {c.name: c.kind for c in self.columns}
+        by_action: dict[str, list[Suggestion]] = {}
+        for s in self.suggestions:
+            if s.action and s.column != t.name:
+                by_action.setdefault(s.action, []).append(s)
+
+        def cols(action: str) -> list[str]:
+            return [s.column for s in by_action.get(action, []) if s.column is not None]
+
+        dropped, dates = cols("drop"), [n for n, k in kinds.items() if k == "datetime"]
+        identifiers = [n for n, k in kinds.items() if k == "text" and n not in cols("to_numeric")]
+        converted = set(cols("to_numeric") + cols("to_boolean") + cols("standardize"))
+        encoded = set(cols("encode"))
+        unencoded = [n for n, k in kinds.items() if k == "categorical" and n not in encoded
+                     and n not in converted and n != t.name]
+        excluded = {t.name, *dropped, *dates, *identifiers, *t.leaks, *unencoded}
+        features = [n for n in kinds if n not in excluded]
+        booleans = [n for n in features if kinds[n] == "boolean" or n in cols("to_boolean")]
+
+        before = self._code_lines(d, [s for s in self.suggestions if s.action in
+                                      ("remove_duplicates", "to_numeric", "to_boolean", "standardize")
+                                      and s.column not in excluded])
+        if t.missing:
+            before.append(f"{d} = {d}.dropna(subset=[{t.name!r}])   # rows without a target can't be used")
+        logs = [c for c in cols("log_transform") if c in features]
+        if logs:
+            before.append(f"{d} = dst.log_transform({d}, {logs})   # log(1 + x) learns nothing from the data")
+        if booleans:
+            before.append(f"{d}[{booleans}] = {d}[{booleans}].astype('boolean').astype(float)   "
+                          f"# True/False as 1/0; blanks stay missing")
+
+        steps: list[str] = []
+        fills: dict[tuple[str, str], list[str]] = {}
+        for s in by_action.get("fill_missing", []):
+            if s.column in features and s.column not in booleans:
+                key, method = next(iter(s.options.items()))
+                fills.setdefault((key, method), []).append(str(s.column))
+        for (key, method), names in fills.items():
+            other = "categorical" if key == "numeric" else "numeric"
+            steps.append(f"dst.MissingFiller({key}={method!r}, {other}=None, columns={names}),")
+        capped = [c for c in cols("cap_outliers") if c in features]
+        if capped:
+            steps.append(f"dst.OutlierCapper(columns={capped}),")
+        encodings = {str(s.column): s.options["method"] for s in by_action.get("encode", []) if s.column in features}
+        if encodings:
+            steps.append(f"dst.CategoryEncoder({encodings!r}, drop_original=True),")
+        classify = t.task == "classification"
+        model = "HistGradientBoostingClassifier" if classify else "HistGradientBoostingRegressor"
+        steps.append(f"{model}(random_state=0),   # accepts blanks; swap in any scikit-learn model")
+
+        if not classify:
+            folds, scoring = "KFold(5, shuffle=True, random_state=0)", "neg_root_mean_squared_error"
+        else:
+            folds = "StratifiedKFold(5, shuffle=True, random_state=0)   # keeps each class's share in every fold"
+            scoring = "roc_auc" if t.classes is not None and len(t.classes) == 2 else "balanced_accuracy"
+        left_out = [("possible leaks: check they were known before the outcome", t.leaks),
+                    ("suggested for dropping", [c for c in dropped if c != t.name and c not in t.leaks]),
+                    ("identifiers or free text", identifiers),
+                    ("dates: turn into features first if they matter", dates),
+                    ("categories with no encoding suggested", unencoded)]
+        lines = [*(["import pandas as pd"] if any("pd." in line for line in before) else []),
+                 "import dstoolkit as dst",
+                 f"from sklearn.ensemble import {model}",
+                 f"from sklearn.model_selection import {'StratifiedKFold' if classify else 'KFold'}, cross_val_score",
+                 "from sklearn.pipeline import make_pipeline", "",
+                 "# 1. Steps that learn nothing from the data: safe before the split", *before]
+        if not before:
+            lines.append("# (none needed)")
+        flags = [str(c) for c in t.missingness["column_2"] if c not in t.leaks]
+        if flags:
+            lines.append("# Blanks related to the target: add a flag only if the blank was known before the outcome")
+            lines += [f"# {d}[{f'{c}_missing'!r}] = {d}[{c!r}].isna().astype(int)" for c in flags]
+        lines += ["", "# 2. Features and target"]
+        listed: set[str] = set()
+        for why, names in left_out:
+            fresh = [n for n in names if n not in listed]
+            listed.update(fresh)
+            if fresh:
+                lines.append(f"# Left out ({why}): {', '.join(fresh)}")
+        lines += [f"X = {d}[{features!r}]", f"y = {d}[{t.name!r}]", "",
+                  "# 3. Steps that learn from the data: inside the pipeline, refitted on each training fold",
+                  "model = make_pipeline(", *[f"    {step}" for step in steps], ")", "",
+                  f"folds = {folds}",
+                  f"scores = cross_val_score(model, X, y, cv=folds, scoring={scoring!r})",
+                  f'print(f"{scoring}: {{scores.mean():.3f}} ± {{scores.std():.3f}}")']
+        return "\n".join(lines)
 
     # ----- HTML -----
 
@@ -228,6 +359,9 @@ class Profile:
 
         if v is not None:
             parts.append(_validation_html(v))
+
+        if self.target is not None:
+            parts.append(self._target_html())
 
         # Suggestions
         parts.append("<h2>Suggested cleaning</h2>")
@@ -289,6 +423,56 @@ class Profile:
         parts.append('<p class="dst-footer">Generated by dstoolkit.profile()</p></div>')
         return "\n".join(parts)
 
+    def _target_html(self) -> str:
+        e = html.escape
+        t = self.target
+        assert t is not None
+        parts = [f"<h2>Target: {e(t.name)}</h2>",
+                 f'<p class="dst-note">Treated as <b>{t.task}</b> (pass <code>task=</code> to change it). '
+                 + (f"{t.missing:,} row(s) have no target and can't be used for training." if t.missing else
+                    "Every row has a target.") + "</p>"]
+        if t.classes is not None:
+            total = int(t.classes.sum())
+            parts.append('<table class="dst-table"><thead><tr><th>Class</th><th>Rows</th><th>Share</th></tr></thead>'
+                         "<tbody>" + "".join(f"<tr><td>{e(str(k))}</td><td>{int(v):,}</td><td>{v / total:.1%}</td></tr>"
+                                             for k, v in t.classes.head(20).items()) + "</tbody></table>")
+        leaks = set(t.leaks)
+        if not t.features.empty:
+            rows = "".join(
+                f"<tr><td>{e(str(r['column_2']))}</td><td>{e(str(r['test']))}</td>"
+                f"<td>{e(_strength_text(str(r['measure']), float(r['strength'])))}</td>"
+                f"<td>{_p_text(float(r['p_adjusted']))}</td><td>{int(r['n']):,}</td>"
+                f"<td>{'<b>possible leak</b> ' if str(r['column_2']) in leaks else ''}{e(str(r['note']))}</td></tr>"
+                for r in t.features.to_dict("records"))
+            parts.append("<h3>How strongly each feature is related to the target</h3>"
+                         '<p class="dst-note">Tested on the rows where both values are present; p-values are '
+                         "adjusted for testing many features. A strong relation can be real signal, or a leak: "
+                         "a column recorded after the outcome. Related isn't the same as useful in a model, "
+                         "where features overlap.</p>"
+                         '<div class="dst-scroll"><table class="dst-table"><thead><tr><th>Feature</th><th>Test</th>'
+                         "<th>Strength</th><th>Adjusted p</th><th>Rows</th><th>Note</th></tr></thead><tbody>"
+                         + rows + "</tbody></table></div>")
+        if t.untested:
+            parts.append(f'<p class="dst-note">Not tested (identifiers, free text, dates, or one value where the '
+                         f"target is present): {e(', '.join(t.untested))}.</p>")
+        if not t.missingness.empty:
+            rows = "".join(
+                f"<tr><td>{e(str(r['column_2']))}</td>"
+                f"<td>{e(_strength_text(str(r['measure']), float(r['strength'])))}</td>"
+                f"<td>{_LEAK if str(r['column_2']) in leaks else 'keep a flag if known before the outcome'}</td></tr>"
+                for r in t.missingness.to_dict("records"))
+            parts.append("<h3>Blanks related to the target</h3>"
+                         '<p class="dst-note">Whether the value is blank, compared with the target. Filling '
+                         "these blanks hides that information unless a flag column keeps it.</p>"
+                         '<table class="dst-table"><thead><tr><th>Feature</th><th>Strength</th><th>Meaning</th>'
+                         "</tr></thead><tbody>" + rows + "</tbody></table>")
+        parts.append("<h3>Leak-free modelling starter</h3>"
+                     '<p class="dst-note">From <code>report.pipeline()</code>: the learned steps run inside a '
+                     "scikit-learn pipeline, so cross-validation refits them on each training fold. Review it "
+                     "before using.</p>"
+                     f'<pre class="dst-code">{e(self.pipeline())}</pre>')
+        return "\n".join(parts)
+
     def to_html(self) -> str:
         """A complete, self-contained HTML page."""
         return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
@@ -315,7 +499,9 @@ class Profile:
 def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = True,
             max_categories: int = 10, missing_ok: Iterable[str] = (),
             rules: Mapping[Hashable, ColumnRule] | None = None,
-            checks: Mapping[str, Comparison] | None = None, related: bool = True) -> Profile:
+            checks: Mapping[str, Comparison] | None = None, related: bool = True,
+            target: Hashable | None = None, task: Literal["auto", "classification", "regression"] = "auto",
+            ) -> Profile:
     """Profile a DataFrame: overview, per-column statistics, correlations and
     suggested cleaning steps.
 
@@ -330,6 +516,14 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
              with its defaults. Skipped above 30 columns, where the number of
              pairs makes it slow; call `dst.associations()` on the columns you
              care about instead.
+    target: the column a model will predict. Adds a Target section: the class
+            balance, how strongly each feature is related to the target,
+            features whose blanks are related to it, and possible leaks
+            (features almost perfectly related to it). The target itself gets
+            no fill, encoding or outlier advice, and `report.pipeline()` writes
+            a leak-free scikit-learn starter.
+    task: "classification" or "regression"; "auto" treats text, True/False and
+          whole-number columns with at most 10 values as classes
     """
     if df.shape[1] == 0:
         raise ValueError("DataFrame has no columns")
@@ -337,6 +531,10 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
         dupes = df.columns[df.columns.duplicated()].tolist()
         raise ValueError(f"Column name(s) {dupes} appear more than once; rename duplicates first")
 
+    if target is not None and target not in df.columns:
+        raise KeyError(f"target {target!r} is not a column")
+    if task not in ("auto", "classification", "regression"):
+        raise ValueError(f'task must be "auto", "classification" or "regression", got {task!r}')
     validation = (validate(df, rules, checks, verbose=False)
                   if rules is not None or checks is not None else None)
 
@@ -381,6 +579,12 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
     else:
         related_pairs = _associations(df, verbose=False)
 
+    target_profile = None
+    if target is not None:
+        target_profile, target_suggestions = _profile_target(df, target, task)
+        suggestions = [s for s in suggestions if s.column != target_profile.name or s.step == "type"]
+        suggestions.extend(target_suggestions)
+
     order = {"high": 0, "medium": 1, "low": 2}
     suggestions.sort(key=lambda s: (STEP_ORDER.get(s.step, 9), order[s.severity]))
 
@@ -388,7 +592,85 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
                    missing_cells=int(df.isna().sum().sum()),
                    memory_bytes=int(df.memory_usage(deep=True).sum()), columns=columns,
                    correlations=correlations, correlation_chart=corr_chart, suggestions=suggestions,
-                   validation=validation, associations=related_pairs, associations_skipped=related_skipped)
+                   validation=validation, associations=related_pairs, associations_skipped=related_skipped,
+                   target=target_profile)
+
+
+def _task(series: pd.Series, task: str) -> Task:
+    if task in ("classification", "regression"):
+        return task  # type: ignore[return-value]
+    values = series.dropna()
+    if not pd.api.types.is_numeric_dtype(series) or pd.api.types.is_bool_dtype(series):
+        return "classification"
+    whole = bool((values.astype(float) % 1 == 0).all())
+    return "classification" if whole and values.nunique() <= CLASSIFICATION_MAX_VALUES else "regression"
+
+
+def _profile_target(df: pd.DataFrame, target: Hashable,
+                    task: str) -> tuple[TargetProfile, list[Suggestion]]:
+    name = str(target)
+    series = df[target]
+    kind = _task(series, task)
+    out: list[Suggestion] = []
+    missing = int(series.isna().sum())
+    if missing:
+        out.append(Suggestion(name, "drop", "high", f"{missing:,} row(s) have no {name}: drop them before "
+                              f"modelling (a target can't be filled).", "drop_missing_target"))
+
+    classes = None
+    data = df.copy()
+    if kind == "classification":
+        classes = series.value_counts()
+        data[target] = series.astype("category")   # class labels, even when stored as 0/1
+        if len(classes) < 2:
+            out.append(Suggestion(name, "note", "high", f"{name} has {len(classes)} value(s): nothing to predict."))
+        elif classes.iloc[-1] / classes.sum() < IMBALANCE_SHARE:
+            out.append(Suggestion(name, "note", "medium", f"Imbalanced: the smallest class ({classes.index[-1]!s}) "
+                                  f"is {classes.iloc[-1] / classes.sum():.1%} of rows. Use stratified folds and a "
+                                  f"metric such as ROC AUC or balanced accuracy, not plain accuracy."))
+
+    empty = pd.DataFrame(columns=["column_1", "column_2", "measure", "strength", "p_adjusted", "n"])
+    untested: list[str] = []
+    features = empty
+    if series.nunique() >= 2:
+        features = _associations(data, target=target, significant_only=False, verbose=False)
+        tested = {str(c) for c in features["column_2"]}
+        untested = [str(c) for c in df.columns if c != target and str(c) not in tested]
+        features = features.assign(column_1=features["column_1"].map(str), column_2=features["column_2"].map(str))
+
+    gaps = [c for c in df.columns if c != target and 0 < df[c].isna().sum() < len(df)]
+    missingness = empty
+    if gaps and series.nunique() >= 2:
+        blanks = pd.DataFrame({str(c): df[c].isna() for c in gaps}, index=df.index)
+        blanks[name] = data[target]
+        found = _associations(blanks, target=name, significant_only=False, verbose=False)
+        missingness = found[(found["p_adjusted"] < 0.05) & (found["strength"] >= MISSING_SIGNAL)]
+        missingness = missingness.reset_index(drop=True)
+
+    leaks: list[str] = []
+    strong = features[(features["p_adjusted"] < 0.05) & (features["strength"].abs() >= LEAK_STRENGTH)]
+    for r in strong.to_dict("records"):
+        leaks.append(str(r["column_2"]))
+        out.append(Suggestion(str(r["column_2"]), "drop", "high",
+                              f"Possible leak: almost perfectly related to {name} ({r['measure']} = "
+                              f"{abs(r['strength']):.2f}). Check it was known before the outcome; if not, "
+                              f"leave it out of the model."))
+    for r in missingness.to_dict("records"):
+        column = str(r["column_2"])
+        if r["strength"] >= LEAK_STRENGTH:
+            if column not in leaks:
+                leaks.append(column)
+            out.append(Suggestion(column, "drop", "high",
+                                  f"Possible leak: whether {column} is blank predicts {name} almost perfectly "
+                                  f"({r['measure']} = {r['strength']:.2f}). It may have been recorded after the "
+                                  f"outcome; if so, leave it out of the model."))
+        else:
+            out.append(Suggestion(column, "note", "medium",
+                                  f"Whether {column} is blank is related to {name} ({r['measure']} = "
+                                  f"{r['strength']:.2f}). If blanks were known before the outcome, keep a flag "
+                                  f"before filling: df[{f'{column}_missing'!r}] = df[{column!r}].isna()."))
+    return TargetProfile(name=name, task=kind, missing=missing, classes=classes, features=features,
+                         missingness=missingness, leaks=leaks, untested=untested), out
 
 
 def _rule_label(r: Any) -> str:
@@ -559,8 +841,12 @@ def _profile_column(series: pd.Series, name: str, charts: bool, max_categories: 
                 suggest("encode", "low", f"{categories} categories; one-hot encode for modeling.", "encode",
                         method="onehot")
             else:
-                suggest("encode", "low", f"{categories} categories; label-encode, or group rare ones "
-                        f"before one-hot encoding.", "encode", method="label")
+                # not label codes: numbering unordered categories invents an order (2 > 1) that linear
+                # and distance-based models take literally
+                suggest("encode", "low", f"{categories} categories; one-hot encode (adds {categories} columns). "
+                        f"Group rare categories into 'Other' first if many are small. Label codes suit "
+                        f"tree-based models only: they imply an order the categories don't have.", "encode",
+                        method="onehot")
 
         if 0 < share < MOSTLY_EMPTY and kind == "boolean" and share >= 0.05:
             # a True/False column can't hold a "Missing" label; its gaps can simply stay missing
@@ -662,6 +948,9 @@ def _related_html(pairs: pd.DataFrame | None, skipped: str | None) -> str:
     return (head + '<div class="dst-scroll"><table class="dst-table"><thead><tr><th>Column</th><th>Column</th>'
             "<th>Test</th><th>Strength</th><th>Adjusted p</th><th>Rows</th><th>Note</th></tr></thead><tbody>"
             + rows + "</tbody></table></div>" + more)
+
+
+_LEAK = "<b>possible leak</b>"
 
 
 def _strength_text(measure: str, strength: float) -> str:

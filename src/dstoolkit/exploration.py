@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import itertools
 import warnings
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Hashable, Sequence
 from typing import Any, Literal, TypeVar
 
 import matplotlib.pyplot as plt
@@ -312,7 +312,7 @@ ASSOCIATION_COLUMNS = ["column_1", "column_2", "kind", "test", "measure", "stren
 def associations(df: pd.DataFrame, columns: Sequence[str] | None = None,
                  method: CorrelationMethod = "auto", alpha: float = 0.05, min_strength: float = 0.3,
                  significant_only: bool = True, max_categories: int = 50,
-                 verbose: bool = True) -> pd.DataFrame:
+                 target: Hashable | None = None, verbose: bool = True) -> pd.DataFrame:
     """Which columns are related, and how strongly: one row per pair of columns.
 
     Each pair is tested once, on the rows where both values are present:
@@ -331,6 +331,9 @@ def associations(df: pd.DataFrame, columns: Sequence[str] | None = None,
     significant_only: False returns every pair that could be tested
     max_categories: text or category columns with more distinct values than this
                     (names, IDs, free text) are left out
+    target: only test pairs that include this column (it is then always
+            column_1), e.g. which features are related to what a model predicts.
+            The p-value correction covers just those pairs.
 
     Date columns are left out. Notes flag results that need care, such as a
     chi-square test with small expected counts.
@@ -339,7 +342,9 @@ def associations(df: pd.DataFrame, columns: Sequence[str] | None = None,
         raise ValueError("alpha must be between 0 and 1")
     if method not in ("auto", "pearson", "spearman"):
         raise ValueError(f'method must be "auto", "pearson" or "spearman", got {method!r}')
-    names = list(df.columns) if columns is None else list(columns)
+    names: list[Any] = list(df.columns) if columns is None else list(columns)
+    if target is not None and target not in names:
+        names = [target, *names]
     missing = [c for c in names if c not in df.columns]
     if missing:
         raise KeyError(f"Columns not found: {missing}")
@@ -353,9 +358,15 @@ def associations(df: pd.DataFrame, columns: Sequence[str] | None = None,
         else:
             skipped.append(f"{name} ({why})")
 
+    if target is not None and target not in kinds:
+        why = next(s for s in skipped if s.startswith(f"{target} ("))
+        raise ValueError(f"The target can't be tested: {why}")
+    pairs = ([(target, c) for c in kinds if c != target] if target is not None
+             else list(itertools.combinations(kinds, 2)))
+
     normal: dict[Any, bool] = {}
     rows: list[dict[str, Any]] = []
-    for a, b in itertools.combinations(kinds, 2):
+    for a, b in pairs:
         both = df[a].notna() & df[b].notna()          # pair rows first, then drop missing values
         x, y = df.loc[both, a], df.loc[both, b]
         if kinds[a] == kinds[b] == "numeric":
