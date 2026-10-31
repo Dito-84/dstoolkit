@@ -232,6 +232,7 @@ Worked examples on real data:
 | [`Profile_Titanic`](notebooks/Profile_Titanic.ipynb) | Profile the raw data, apply the suggested code, profile again, read what's left, and validate both against rules |
 | [`Preprocessing_Titanic`](notebooks/Preprocessing_Titanic.ipynb) | Every cleaning step on the Titanic passenger list, then the same steps in one `clean()` call |
 | [`Toolkit_on_Titanic_Data`](notebooks/Toolkit_on_Titanic_Data.ipynb) | The exploration functions on real data: missing ages, heavily skewed fares, fare by class |
+| [`Modelling_Titanic`](notebooks/Modelling_Titanic.ipynb) | From raw data to a model: `associations()` finds what's related to survival (and a column that leaks the answer), `validate()` checks the inputs, and a pipeline of dstoolkit transformers is cross-validated against a no-skill baseline |
 
 [`notebooks/learning/`](notebooks/learning/) keeps the tutorial notebooks the package grew out of: NumPy and pandas basics, matplotlib practice, and building the distribution functions step by step.
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **New notebook: `Modelling_Titanic`.** Explores which columns are related to survival with `associations()`, which also flags a column recorded after the sinking that would leak the answer; checks the model's inputs with `validate()`; then cross-validates a scikit-learn pipeline of dstoolkit transformers (shuffled 5-fold) against a no-skill baseline: about 79% accuracy against 62%, and 98% if the leaked column is added. Documentation only; no code changes.
+
 ## 0.9.0
 
 Three features rebuilt from earlier 2023 drafts, rewritten from scratch to fix their flaws and follow dstoolkit's safe-by-default rules.
