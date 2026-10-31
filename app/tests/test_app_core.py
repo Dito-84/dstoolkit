@@ -35,6 +35,12 @@ def test_analyze_titanic():
     assert any(s["column"] == "age" and s["step"] == "missing" for s in actionable)
 
 
+def test_analyze_leaves_out_related_columns_which_need_scipy():
+    app_core.analyze("titanic3.csv", TITANIC)
+    assert app_core._state["report"].associations is None
+    assert '"scipy"' not in (APP / "app.js").read_text(encoding="utf-8")
+
+
 def test_clean_applies_only_selected_steps():
     analysis = json.loads(app_core.analyze("titanic3.csv", TITANIC))
     drop_ids = [s["id"] for s in analysis["suggestions"] if s["step"] == "drop"]

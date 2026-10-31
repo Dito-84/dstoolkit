@@ -1,8 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.10.0
 
-- **New notebook: `Modelling_Titanic`.** Explores which columns are related to survival with `associations()`, which also flags a column recorded after the sinking that would leak the answer; checks the model's inputs with `validate()`; then cross-validates a scikit-learn pipeline of dstoolkit transformers (shuffled 5-fold) against a no-skill baseline: about 79% accuracy against 62%, and 98% if the leaked column is added. Documentation only; no code changes.
+- **New: a "Related columns" section in `profile()`.** It lists the pairs of columns of any type that are related, from `associations()` with its defaults: Pearson or Spearman for two number columns, chi-square with Cramér's V for two category columns, and ANOVA with eta for one of each. Until now the report only showed Pearson correlations between number columns, so a relation between, say, sex and survival didn't appear.
+  - The pairs are also available as `report.associations`.
+  - The HTML lists the strongest 20 pairs, with each pair's notes (small expected counts, small groups).
+  - `related=False` leaves the section out. Above 30 columns it's skipped, because the number of pairs grows with the square of the columns; the report says so and shows the `associations()` call to run instead.
+  - The existing correlation heatmap and the "almost perfectly correlated" suggestion are unchanged.
+  - The browser app leaves the section out (`related=False`): it needs SciPy, which the page doesn't load.
+- The `Profile_Titanic` notebook reads the new section, including why `boat` looks only moderately related to survival when it's tested on the rows where both values are present.
+- **New notebook: `Modelling_Titanic`** (added after 0.9.0). Explores which columns are related to survival with `associations()`, which also flags a column recorded after the sinking that would leak the answer; checks the model's inputs with `validate()`; then cross-validates a scikit-learn pipeline of dstoolkit transformers (shuffled 5-fold) against a no-skill baseline: about 79% accuracy against 62%, and 98% if the leaked column is added. Documentation only; no code changes.
 
 ## 0.9.0
 
