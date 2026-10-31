@@ -31,6 +31,8 @@ Rules per column (use any combination):
     allowed   the only values permitted, e.g. ["male", "female"]
     unique    True: no value appears more than once
     pattern   regular expression the whole value must match
+    format    a named format: "us_zip" (12345 or 12345-6789), "us_phone"
+              (10-digit US number, written any common way) or "email"
 
 Checks compare two columns with ==, !=, <, <=, > or >=. Order comparisons
 (<, <=, >, >=) need numbers or dates on both sides.
@@ -62,6 +64,8 @@ from ._messages import say
 __all__ = ["validate", "ValidationReport", "RuleResult", "ColumnRule", "Comparison", "ValidationError"]
 
 TypeName = Literal["number", "integer", "text", "boolean", "datetime", "category"]
+FormatName = Literal["us_zip", "us_phone", "email"]
+FORMAT_NAMES: tuple[str, ...] = ("us_zip", "us_phone", "email")
 TYPE_NAMES: tuple[str, ...] = ("number", "integer", "text", "boolean", "datetime", "category")
 
 
@@ -74,6 +78,7 @@ class ColumnRule(TypedDict, total=False):
     allowed: Sequence[Any]
     unique: bool
     pattern: str
+    format: FormatName
 
 
 Operator = Literal["==", "!=", "<", "<=", ">", ">="]
@@ -86,7 +91,7 @@ OPERATORS: dict[str, Callable[[Any, Any], Any]] = {
 }
 ORDERING = frozenset({"<", "<=", ">", ">="})
 
-RULE_KEYS: tuple[str, ...] = ("type", "required", "min", "max", "allowed", "unique", "pattern")
+RULE_KEYS: tuple[str, ...] = ("type", "required", "min", "max", "allowed", "unique", "pattern", "format")
 PRINTED_EXAMPLES = 3   # examples per failed rule in the printed summary
 
 
@@ -102,7 +107,8 @@ class ValidationError(ValueError):
 class RuleResult:
     """The outcome of one rule on one column."""
     column: str        # the column, or the check's name for a comparison
-    rule: str          # "type", "required", "min", "max", "allowed", "unique", "pattern", "column" or "compare"
+    rule: str          # "type", "required", "min", "max", "allowed", "unique", "pattern", "format",
+                       # "column" or "compare"
     expected: str      # what the rule asks for, in words
     checked: int       # how many values were checked
     failed: int        # how many rows failed
@@ -297,6 +303,11 @@ def _parse_rules(rules: Mapping[Hashable, ColumnRule]) -> list[tuple[Hashable, l
                 value = list(value)
                 if not value:
                     raise ValueError(f"{column!r}: allowed is empty, so every value would fail")
+            if key == "format" and value not in FORMAT_NAMES:
+                close = difflib.get_close_matches(str(value), FORMAT_NAMES, n=1)
+                hint = f" (did you mean {close[0]!r}?)" if close else ""
+                raise ValueError(f"{column!r}: format must be one of {', '.join(FORMAT_NAMES)}, "
+                                 f"got {value!r}{hint}")
             if key == "pattern":
                 if not isinstance(value, str):
                     raise TypeError(f"{column!r}: pattern must be a regular expression string")
@@ -667,6 +678,67 @@ def _pattern_check(series: pd.Series, pattern: re.Pattern[str]) -> tuple[str, Ch
     return expected, _per_value(reason)
 
 
+ZIP = re.compile(r"\d{5}(?:-\d{4})?")
+PHONE = re.compile(r"(?:\+?1[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}")
+EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[A-Za-z]{2,}")
+
+
+def _zip_reason(v: Any) -> str | None:
+    if _is_number(v):
+        if float(v).is_integer() and 0 < v < 10000:
+            return f"a number: looks like a ZIP code that lost its leading zero ({int(v):05d})"
+        return "a number, not text (ZIP codes stored as numbers lose leading zeros)"
+    if not isinstance(v, str):
+        return f"{_describe(v)}, not text"
+    if ZIP.fullmatch(v):
+        return None
+    if re.fullmatch(r"\d{9}", v):
+        return "9 digits without the hyphen (ZIP+4 is written 12345-6789)"
+    if re.fullmatch(r"\d{3,4}", v):
+        return f"{len(v)} digits: may have lost leading zeros"
+    return "not a US ZIP code (12345 or 12345-6789)"
+
+
+def _phone_reason(v: Any) -> str | None:
+    if not isinstance(v, str):
+        return "a number, not text" if _is_number(v) else f"{_describe(v)}, not text"
+    if not PHONE.fullmatch(v.strip()):
+        digits = re.sub(r"\D", "", v)
+        if len(digits) not in (10, 11):
+            return f"{len(digits)} digits; a US phone number has 10"
+        return "not a US phone number format"
+    digits = re.sub(r"\D", "", v)[-10:]
+    if digits[0] in "01":
+        return "area code can't start with 0 or 1"
+    if digits[3] in "01":
+        return "exchange (digits 4-6) can't start with 0 or 1"
+    return None
+
+
+def _email_reason(v: Any) -> str | None:
+    if not isinstance(v, str):
+        return f"{_describe(v)}, not text"
+    if EMAIL.fullmatch(v):
+        return None
+    if "@" not in v:
+        return "no @"
+    if re.search(r"\s", v):
+        return "contains spaces"
+    return "not an email address"
+
+
+FORMATS: dict[str, tuple[str, Callable[[Any], str | None]]] = {
+    "us_zip": ("US ZIP code, 12345 or 12345-6789", _zip_reason),
+    "us_phone": ("US phone number, 10 digits", _phone_reason),
+    "email": ("email address", _email_reason),
+}
+
+
+def _format_check(series: pd.Series, name: str) -> tuple[str, Check]:
+    expected, reason = FORMATS[name]
+    return expected, _per_value(reason)
+
+
 _CHECKS: dict[str, Callable[[pd.Series, Any], tuple[str, Check]]] = {
     "type": _type_check,
     "min": _bound_check("min"),
@@ -674,6 +746,7 @@ _CHECKS: dict[str, Callable[[pd.Series, Any], tuple[str, Check]]] = {
     "allowed": _allowed_check,
     "unique": _unique_check,
     "pattern": _pattern_check,
+    "format": _format_check,
 }
 
 

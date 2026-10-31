@@ -181,6 +181,7 @@ On the data they were fitted on, they give the same results as `fill_missing`, `
 | rule `allowed` | The only values permitted; exact match, with a hint when only case or spaces differ |
 | rule `unique` | No value appears more than once (blanks aren't counted) |
 | rule `pattern` | Regular expression the whole value must match (Python's `re` on every pandas version) |
+| rule `format` | A named format: `"us_zip"` (12345 or 12345-6789), `"us_phone"` (10-digit US number, written any common way) or `"email"`. Failures say what's wrong, e.g. a ZIP code stored as a number that lost its leading zero (2134 → 02134) |
 | `checks={name: (col, op, col)}` | Compares two columns in each row with `==`, `!=`, `<`, `<=`, `>`, `>=`; rows with a blank side are skipped |
 | `report.ok` | True when every rule passed |
 | `report.summary()` | One row per rule: expected, checked, failed, failed %, examples |
