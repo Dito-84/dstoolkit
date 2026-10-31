@@ -35,7 +35,7 @@ report.save("report.html")   # one self-contained file to share
 print(report.code())         # the suggested cleaning steps as runnable code
 ```
 
-The report covers the whole dataset (rows, duplicates, missing cells), every column (type, missing values, statistics, outliers and a chart) and the correlations between numeric columns. It also reads the data and **suggests cleaning steps, with ready-to-run `dstoolkit` code**: which columns are too sparse to keep, which to fill and how, long tails that suit a log scale, numbers stored as text, categories to encode, labels written more than one way ("Male", "male "), and identifier columns to leave out of models.
+The report covers the whole dataset (rows, duplicates, missing cells), every column (type, missing values, statistics, outliers and a chart), the correlations between numeric columns, and **related columns of any type** (numbers, categories, or one of each, from [`associations()`](#exploration-dstoolkitexploration), with p-values corrected for testing many pairs). It also reads the data and **suggests cleaning steps, with ready-to-run `dstoolkit` code**: which columns are too sparse to keep, which to fill and how, long tails that suit a log scale, numbers stored as text, categories to encode, labels written more than one way ("Male", "male "), and identifier columns to leave out of models.
 
 [![Profile report](docs/profile.png)](docs/titanic_profile.html)
 
@@ -163,12 +163,13 @@ On the data they were fitted on, they give the same results as `fill_missing`, `
 
 | Function / method | What it does |
 |---|---|
-| `profile(df, title, charts, max_categories, missing_ok, rules, checks)` | Builds the report; `missing_ok` names columns where blank is meaningful (no fill/drop advice); `rules`/`checks` add a Validation section |
+| `profile(df, title, charts, max_categories, missing_ok, rules, checks, related)` | Builds the report; `missing_ok` names columns where blank is meaningful (no fill/drop advice); `rules`/`checks` add a Validation section; `related=False` leaves out the Related columns section |
 | `report.save(path)` / `report.to_html()` | Self-contained HTML file or string |
 | `report.summary()` | One row per column: type, missing, unique values, outliers |
 | `report.suggestions` | The suggested steps as data (column, severity, message) |
 | `report.code(df_name)` | The suggested steps as runnable code, one call per kind of step |
 | `report.validation` | The `ValidationReport` when `rules` or `checks` were given, otherwise `None` |
+| `report.associations` | The related pairs, as returned by `associations()`. `None` when `related=False`, or above 30 columns, where the number of pairs makes it slow (`report.associations_skipped` says why); call `associations()` on the columns you need instead |
 
 ## Validation: `dstoolkit.validation`
 

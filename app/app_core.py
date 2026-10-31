@@ -108,7 +108,9 @@ def analyze(name: str, data: bytes) -> str:
     """Read and profile a file. Returns JSON for the page."""
     try:
         df = read_table(name, bytes(data))
-        report = dst.profile(df, title=PurePath(name).name or "Dataset")
+        # related=False: the related-columns section needs SciPy, which the page doesn't load
+        # (a large extra download on every first visit)
+        report = dst.profile(df, title=PurePath(name).name or "Dataset", related=False)
     except AppError as err:
         return json.dumps({"ok": False, "error": str(err)})
     _state.update(name=PurePath(name).name or "data.csv", df=df, report=report)

@@ -11,6 +11,8 @@ A drag-and-drop page that profiles and cleans a CSV or Excel file with `dstoolki
 | `tests/test_app_core.py` | Tests the Python side with ordinary Python |
 | `tests/test_browser.py` | End-to-end test in a real browser (runs in CI; needs internet) |
 
+The page's report has every section of `dst.profile()` except "Related columns", which needs SciPy. The page doesn't load SciPy, to keep the first visit's download smaller.
+
 ## Security
 
 The page promises that your file never leaves it. The browser enforces that, rather than leaving it to trust:

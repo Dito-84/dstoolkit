@@ -266,3 +266,61 @@ def test_profile_with_rules_does_not_modify_input(messy):
     before = messy.copy()
     dst.profile(messy, charts=False, rules={"age": {"min": 0}}, checks={"c": ("visits", "<=", "age")})
     pd.testing.assert_frame_equal(messy, before)
+
+
+def _related_frame(n: int = 200) -> pd.DataFrame:
+    rng = np.random.default_rng(0)
+    city = rng.choice(["Tampa", "Miami", "Austin", "Dallas"], n)
+    return pd.DataFrame({
+        "city": city,
+        "state": np.where(np.isin(city, ["Tampa", "Miami"]), "FL", "TX"),   # two categories
+        "rent": np.where(city == "Miami", 2500.0, 1200.0) + rng.normal(0, 100, n),  # number by category
+        "noise": rng.normal(size=n),
+    })
+
+
+def test_related_columns_cover_every_kind_of_pair():
+    df = _related_frame()
+    before = df.copy()
+    r = dst.profile(df, charts=False)
+    pairs = {frozenset((a, b)): kind for a, b, kind in
+             r.associations[["column_1", "column_2", "kind"]].itertuples(index=False)}
+    assert pairs[frozenset(("city", "state"))] == "categorical"
+    assert pairs[frozenset(("rent", "city"))] == "mixed"
+    assert not any("noise" in pair for pair in pairs)
+    assert r.associations_skipped is None
+    html = r.to_html()
+    assert "<h2>Related columns</h2>" in html
+    assert "<td>Cramér&#x27;s V = 0.99</td>" in html and "<td>eta = 0.98</td>" in html   # no sign on V or eta
+    pd.testing.assert_frame_equal(df, before)
+
+
+def test_related_columns_show_the_sign_of_a_correlation():
+    x = np.arange(60.0)
+    html = dst.profile(pd.DataFrame({"a": x, "b": -x}), charts=False).to_html()
+    assert "<td>rho = -1.00</td>" in html
+
+
+def test_related_columns_can_be_turned_off_and_are_skipped_for_wide_data():
+    off = dst.profile(_related_frame(), charts=False, related=False)
+    assert off.associations is None and "related=False" in off.to_html()
+    wide = pd.DataFrame(np.random.default_rng(1).normal(size=(20, 31)), columns=[f"c{i}" for i in range(31)])
+    skipped = dst.profile(wide, charts=False)
+    assert skipped.associations is None
+    assert "31 columns is more than 30" in skipped.associations_skipped
+    assert "dst.associations(df, columns=[...])" in skipped.to_html()
+
+
+def test_related_columns_when_nothing_is_related():
+    rng = np.random.default_rng(2)
+    r = dst.profile(pd.DataFrame({"a": rng.normal(size=100), "b": rng.normal(size=100)}), charts=False)
+    assert r.associations is not None and r.associations.empty
+    assert "No pairs are both significant" in r.to_html()
+
+
+def test_related_columns_list_the_strongest_twenty():
+    x = np.arange(40.0)
+    df = pd.DataFrame({f"c{i}": x + i * np.sin(x * (i + 1)) * 0.01 for i in range(8)})   # 28 related pairs
+    r = dst.profile(df, charts=False)
+    assert len(r.associations) == 28
+    assert "Showing the strongest 20 of 28 pairs" in r.to_html()

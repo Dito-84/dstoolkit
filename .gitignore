@@ -8,3 +8,5 @@ dist/
 .venv/
 _site/
 _screenshots/
+.coverage
+.coverage.*

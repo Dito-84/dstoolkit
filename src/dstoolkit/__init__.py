@@ -53,7 +53,7 @@ from .exploration import (
 from .profiling import ColumnProfile, Profile, Suggestion, profile
 from .validation import ColumnRule, Comparison, RuleResult, ValidationError, ValidationReport, validate
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 
 # The transformers need scikit-learn (an optional extra), so they're imported on
 # first use: `dst.Scaler` works when scikit-learn is installed, and `import
