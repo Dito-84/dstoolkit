@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **New: `dst.associations(df)`** shows which columns are related: one row per pair, with the test, the strength, the p-value, the adjusted p-value and the number of rows used.
+  - Two number columns: Pearson or Spearman. `method="auto"` uses Pearson only when both columns look normally distributed.
+  - Two category columns: chi-square, with bias-corrected Cramér's V.
+  - A number and a category column: ANOVA, with the correlation ratio eta.
+  - Each pair is tested once, on the rows where both values are present, and p-values are corrected for testing many pairs (Benjamini-Hochberg).
+  - Notes flag chi-square tests with small expected counts and eta inflated by small groups.
+  - IDs, free text, dates and constant columns are left out, and the summary names them.
+  - This replaces earlier drafts that dropped missing values from each column separately, which paired values from different rows: r = 0.978 instead of 1.0 in the regression test.
+
 ## 0.8.0
 
 The cleaning steps can now be learned on training data and applied to new data, so they fit into machine-learning pipelines without leaking test data. Also: optional scikit-learn, summaries through `logging`, a hardened browser app, and stricter CI.
