@@ -35,7 +35,7 @@ report.save("report.html")   # one self-contained file to share
 print(report.code())         # the suggested cleaning steps as runnable code
 ```
 
-The report covers the whole dataset (rows, duplicates, missing cells), every column (type, missing values, statistics, outliers and a chart) and the correlations between numeric columns. It also reads the data and **suggests cleaning steps, with ready-to-run `dstoolkit` code**: which columns are too sparse to keep, which to fill and how, long tails that suit a log scale, numbers stored as text, categories to encode, and identifier columns to leave out of models.
+The report covers the whole dataset (rows, duplicates, missing cells), every column (type, missing values, statistics, outliers and a chart) and the correlations between numeric columns. It also reads the data and **suggests cleaning steps, with ready-to-run `dstoolkit` code**: which columns are too sparse to keep, which to fill and how, long tails that suit a log scale, numbers stored as text, categories to encode, labels written more than one way ("Male", "male "), and identifier columns to leave out of models.
 
 [![Profile report](docs/profile.png)](docs/titanic_profile.html)
 
@@ -147,6 +147,7 @@ On the data they were fitted on, they give the same results as `fill_missing`, `
 | `to_datetime_columns(df, columns, min_share, dayfirst, format)` | Date text (2020-01-31, 01/31/2020, ...) to real dates. Day/month order is worked out per column from the data (13/02/2020 can only be day-first), never value by value; a column mixing both orders is left alone. Number columns are never turned into dates |
 | `to_category(df, columns, max_unique)` | Repeated text labels (hospital, region) to pandas' category type |
 | `convert_types(df)` | Runs the three type conversions above with safe defaults (categories optional) |
+| `standardize_labels(df, columns, mapping, unmatched)` | One spelling per label: `{"Female": ["f", "woman"], "Male": ["m", "man"]}`, or a list of labels when spellings only differ by case and spaces. Values that match nothing are kept (or made missing, or raise), and always listed in the summary |
 | `remove_duplicates(df, subset, keep)` | Drops duplicate rows, optionally judged on a subset of columns; kept rows keep their labels |
 | `fill_missing(df, numeric, categorical, columns, knn_features)` | Fills gaps: mean, median, zero or k-nearest-neighbours for numbers (needs the `sklearn` extra; columns scaled first, and `knn_features` picks which columns judge similarity); most frequent value or "Missing" for text. Date gaps are left missing |
 | `find_outliers(df, columns, method)` | True/False table of outliers by IQR or z-score |

@@ -10,6 +10,11 @@
   - Notes flag chi-square tests with small expected counts and eta inflated by small groups.
   - IDs, free text, dates and constant columns are left out, and the summary names them.
   - This replaces earlier drafts that dropped missing values from each column separately, which paired values from different rows: r = 0.978 instead of 1.0 in the regression test.
+- **New: `dst.standardize_labels(df, columns, mapping)`** gives each label one spelling.
+  - The mapping is `{"Female": ["f", "woman"], "Male": ["m", "man"]}`, or a list of labels when spellings only differ by case and spaces.
+  - Matching ignores case and extra spaces. Missing values stay missing, and category columns stay category columns.
+  - Values that match nothing are kept by default (`unmatched="missing"` or `"raise"` if you prefer), and the summary always lists them. The 2023 draft this replaces silently blanked any value it didn't recognise.
+- **`profile()`** suggests `standardize_labels` when a category column has labels that differ only by case or spaces, and runs it before encoding in `report.code()`. Its encoding suggestion now counts categories after standardizing.
 
 ## 0.8.0
 
