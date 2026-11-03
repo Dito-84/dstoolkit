@@ -255,15 +255,27 @@ class CategoryEncoder(_FrameTransformer):
                     "ignore" (default: 0 in every one-hot column, missing label)
                     or "error"
     drop_original: remove the original text columns
+    min_frequency: group rare categories into one, `other_label` ("Other"):
+                   a whole number is the fewest training rows a category needs,
+                   a fraction is the smallest share of the column's values (0.01
+                   = 1%). Codes, providers and ZIP codes often have hundreds of
+                   values, mostly rare; one column per rare value adds little but
+                   noise. When there is an "Other" group, categories that weren't
+                   in the training data join it instead of being ignored.
+    other_label: the name of the group (a real category with this name joins it)
 
-    Learned: categories_ ({column: [categories in code order]}).
+    Learned: categories_ ({column: [categories in code order]}) and rare_
+    ({column: [categories grouped into other_label]}).
     """
 
     def __init__(self, columns: Mapping[str, Encoding] | Sequence[str],
-                 handle_unknown: UnknownHandling = "ignore", drop_original: bool = False) -> None:
+                 handle_unknown: UnknownHandling = "ignore", drop_original: bool = False,
+                 min_frequency: float | None = None, other_label: str = "Other") -> None:
         self.columns = columns
         self.handle_unknown = handle_unknown
         self.drop_original = drop_original
+        self.min_frequency = min_frequency
+        self.other_label = other_label
 
     def _methods(self) -> dict[Any, str]:
         if isinstance(self.columns, Mapping):
@@ -279,9 +291,20 @@ class CategoryEncoder(_FrameTransformer):
             raise ValueError(f'Encoding must be "onehot" or "label": {bad}')
         if self.handle_unknown not in ("ignore", "error"):
             raise ValueError(f'handle_unknown must be "ignore" or "error", got {self.handle_unknown!r}')
+        m = self.min_frequency
+        if m is not None and (isinstance(m, bool) or not isinstance(m, (int, float)) or m <= 0
+                              or (isinstance(m, float) and m >= 1)):
+            raise ValueError("min_frequency must be a whole number of rows (1 or more) or a share between 0 and 1")
         X = self._start_fit(X)
         _selected(X, list(methods), numeric_only=False)
-        self.categories_ = {col: sorted(X[col].dropna().unique(), key=str) for col in methods}
+        self.categories_, self.rare_ = {}, {}
+        for col in methods:
+            counts = X[col].dropna().value_counts()
+            needed = 0 if m is None else (m * counts.sum() if isinstance(m, float) else m)
+            rare = sorted(counts[counts < needed].index, key=str)
+            frequent = sorted((c for c in counts.index if c not in rare and c != self.other_label), key=str)
+            self.rare_[col] = rare
+            self.categories_[col] = frequent + ([self.other_label] if rare or self.other_label in counts.index else [])
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -290,16 +313,23 @@ class CategoryEncoder(_FrameTransformer):
         result = self._start_transform(X, list(methods))
         for col, method in methods.items():
             known = self.categories_[col]
-            unseen = sorted(set(X[col].dropna().unique()) - set(known), key=str)
+            values = X[col]
+            if self.rare_.get(col):    # rare and unseen categories join the "Other" group
+                values = values.where(values.isna() | values.isin(known), self.other_label)
+                if isinstance(values.dtype, pd.CategoricalDtype):
+                    values = values.astype(object)
+            unseen = sorted(set(X[col].dropna().unique()) - set(known) - set(self.rare_.get(col, [])), key=str)
+            if self.rare_.get(col):
+                unseen = []            # they're in the "Other" group
             if unseen and self.handle_unknown == "error":
                 raise ValueError(f"{col!r} has categories that weren't in the training data: {unseen[:5]}")
             at = _position(result, col) + 1
             if method == "onehot":
                 for offset, cat in enumerate(known):
-                    result.insert(at + offset, f"{col}_{cat}", (X[col] == cat).fillna(False).astype(int).to_numpy())
+                    result.insert(at + offset, f"{col}_{cat}", (values == cat).fillna(False).astype(int).to_numpy())
             else:
                 codes = {cat: i for i, cat in enumerate(known)}
-                result.insert(at, f"{col}_label", X[col].map(codes).astype("Int64").to_numpy())
+                result.insert(at, f"{col}_label", values.map(codes).astype("Int64").to_numpy())
         if self.drop_original:
             result = result.drop(columns=list(methods))
         return result
