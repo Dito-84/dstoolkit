@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **New: `profile(..., target=..., after_outcome=[...])`** marks columns you know were recorded after the outcome, such as a discharge disposition or a follow-up code. They're treated as leaks even when the statistics miss them, and `pipeline()` leaves them out under their own comment. On the Titanic, `body` only exists for people who died, but its blanks show only V = 0.25.
+- **New: "was missing" flags.** `MissingFiller(add_indicator=True)` or `add_indicator=[columns]` adds a 0/1 `<column>_missing` column before filling, so a blank that carries signal isn't lost. `report.pipeline(missing_flags=[...])` adds the flags you choose. They're never added by default, and flagging a possible leak raises an error.
+- A test saves a fitted `pipeline()` model with `joblib`, loads it back and checks that the predictions match.
+
 ## 0.11.1
 
 - **`report.pipeline()` scores a no-skill baseline** on the same folds (`DummyClassifier` or `DummyRegressor`), and prints it under the model's score. A score means little without it: on the Titanic, 79% accuracy sounds good until you know that always predicting "died" gets 62%.

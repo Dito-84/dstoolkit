@@ -128,7 +128,8 @@ def test_feature_names_and_column_transformer(train):
 
 def test_clone_pickle_and_params(train):
     filler = dst.MissingFiller(numeric="median", columns=["age"])
-    assert filler.get_params() == {"numeric": "median", "categorical": "most_frequent", "columns": ["age"]}
+    assert filler.get_params() == {"numeric": "median", "categorical": "most_frequent", "columns": ["age"],
+                                   "add_indicator": False}
     fitted = filler.fit(train)
     assert not hasattr(clone(fitted), "fill_values_")                # a clone is unfitted
     again = pickle.loads(pickle.dumps(fitted))
@@ -182,3 +183,26 @@ def test_import_dstoolkit_does_not_need_scikit_learn(monkeypatch):
         _ = dstoolkit.Scaler
     with pytest.raises(AttributeError):
         _ = dstoolkit.NotAThing
+
+
+# ---------- "was missing" flags ----------
+
+def test_missing_flags_keep_where_the_gaps_were(train, test):
+    filler = dst.MissingFiller(numeric="median", add_indicator=True).fit(train)
+    assert filler.indicator_columns_ == ["age", "city"]          # the columns with gaps in training
+    out = filler.transform(test)
+    assert list(out.columns) == ["age", "age_missing", "fare", "city", "city_missing"]
+    assert out["age_missing"].tolist() == [1, 0] and out["city_missing"].tolist() == [1, 0]
+    assert out["age"].notna().all()                              # filled after the flag was taken
+    assert list(filler.get_feature_names_out()) == list(out.columns)
+
+
+def test_missing_flags_for_named_columns_only(train):
+    filler = dst.MissingFiller(numeric=None, categorical=None, add_indicator=["fare"]).fit(train)
+    out = filler.transform(train)
+    assert list(out.columns) == ["age", "fare", "fare_missing", "city"]
+    assert out["fare_missing"].eq(0).all() and out["age"].isna().any()   # flag only, nothing filled
+    with pytest.raises(TypeError, match="not one string"):
+        dst.MissingFiller(add_indicator="age").fit(train)
+    with pytest.raises(ValueError, match="already exist"):
+        dst.MissingFiller(add_indicator=["age"]).fit(train.assign(age_missing=0))
