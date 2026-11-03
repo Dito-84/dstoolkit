@@ -68,6 +68,7 @@ TEXT_MIN_RATIO = 0.2         # ...and this share of distinct values are treated 
 HIGH_CORRELATION = 0.9
 RELATED_MAX_COLUMNS = 30     # above this, the related-columns section is skipped (pairs grow with the square)
 RELATED_ROWS_SHOWN = 20      # pairs listed in the HTML; report.associations has them all
+GENTLE_BOOSTING = "learning_rate=0.03, max_iter=200, max_depth=3, min_samples_leaf=40, random_state=0"
 LEAK_STRENGTH = 0.9          # a feature this strongly related to the target may give the answer away
 MISSING_SIGNAL = 0.1         # blanks related to the target at least this strongly are worth a flag
 IMBALANCE_SHARE = 0.10       # smallest class below this share: the target is imbalanced
@@ -364,7 +365,8 @@ class Profile:
         model = "HistGradientBoostingClassifier" if classify else "HistGradientBoostingRegressor"
         dummy = "DummyClassifier" if classify else "DummyRegressor"
         guess = "the most common class" if classify else "the average"
-        steps.append(f"{model}(random_state=0),   # accepts blanks and needs no scaling")
+        # shallow, slowly learning trees: the defaults overfit small tables and give overconfident risks
+        steps.append(f"{model}({GENTLE_BOOSTING}),   # accepts blanks, needs no scaling; settings: less overfitting")
 
         if time_column is not None:
             splitter = "TimeSeriesSplit"
