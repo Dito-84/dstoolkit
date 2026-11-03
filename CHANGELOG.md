@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.13.1
+
+- **`pipeline()`'s model no longer overfits.** The generated script now uses gradient boosting with small, slowly learning trees (`learning_rate=0.03, max_iter=200, max_depth=3, min_samples_leaf=40`) instead of scikit-learn's defaults. With the defaults, the hospital demo's risks were overconfident: the riskiest tenth of admissions were predicted 63% and 48% were readmitted, and the safest tenth 1% against 5%. With the new settings each band is within about 2 points, the Brier score falls from 0.145 to 0.135, and ROC AUC rises from 0.71 to 0.75. On the Titanic, ROC AUC is 0.859 (was 0.856).
+- **`Hospital_Readmissions` checks whether the risks can be trusted:** out-of-fold risks by band against the actual readmission rate, the Brier score against always guessing the overall rate, what calling the riskiest 10% would catch (53% of them readmitted, 27% of all readmissions), and the default settings for comparison.
+
 ## 0.13.0
 
 Dates, done safely: the remaining date limits of 0.12.0.

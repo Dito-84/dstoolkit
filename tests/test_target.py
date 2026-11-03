@@ -284,7 +284,7 @@ def test_repeated_identifiers_are_flagged():
 
 
 def test_grouped_folds_stop_patients_leaking_between_folds():
-    df = admissions()
+    df = admissions(patients_n=60, per_patient=10)   # enough rows per patient for the (gentle) model to memorise
     plain = run(dst.profile(df, charts=False, target="readmitted").pipeline(), df)["scores"].mean()
     report = dst.profile(df, charts=False, target="readmitted", group="mrn")
     assert report.group == "mrn"
