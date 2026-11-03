@@ -57,9 +57,12 @@ from .cleaning import (
     _position,
 )
 
-__all__ = ["MissingFiller", "OutlierCapper", "CategoryEncoder", "Scaler"]
+__all__ = ["MissingFiller", "OutlierCapper", "CategoryEncoder", "Scaler", "DateFeatures"]
 
 TransformerNumericFill = Literal["mean", "median", "zero"]
+DatePart = Literal["year", "month", "day", "dayofweek", "dayofyear", "quarter", "hour"]
+DATE_PARTS = ("year", "month", "day", "dayofweek", "dayofyear", "quarter", "hour")
+_DT_ATTR = {"dayofweek": "day_of_week", "dayofyear": "day_of_year"}   # pandas' current names
 UnknownHandling = Literal["ignore", "error"]
 
 
@@ -392,3 +395,84 @@ class Scaler(_FrameTransformer):
             values = result[col].astype(float)
             result[col] = (values - centre) / spread if spread else values * 0
         return result
+
+
+class DateFeatures(_FrameTransformer):
+    """Turn date columns into numbers a model can use.
+
+    columns: date columns to split into parts (default: every date column)
+    parts: which parts become columns, named <column>_<part>: "year", "month",
+           "day", "dayofweek" (Monday = 0), "dayofyear", "quarter", "hour"
+    intervals: {new column: (start column, end column)}: the days from start to
+               end, e.g. {"stay_days": ("admitted", "discharged")}. Durations
+               often matter more than the dates themselves.
+    drop_original: remove the date columns afterwards (default True: most models
+                   can't take dates)
+
+    Columns must already be dates (dst.to_datetime_columns() converts text).
+    Nothing is learned from the data, so new data is treated exactly like the
+    training data; missing dates give missing features.
+
+    Learned: date_columns_ (the columns split into parts).
+    """
+
+    def __init__(self, columns: Sequence[str] | None = None,
+                 parts: Sequence[DatePart] = ("year", "month", "dayofweek"),
+                 intervals: Mapping[str, tuple[str, str]] | None = None, drop_original: bool = True) -> None:
+        self.columns = columns
+        self.parts = parts
+        self.intervals = intervals
+        self.drop_original = drop_original
+
+    def fit(self, X: pd.DataFrame, y: Any = None) -> DateFeatures:
+        bad = [p for p in self.parts if p not in DATE_PARTS]
+        if isinstance(self.parts, str) or bad:
+            raise ValueError(f"parts must be a list drawn from {DATE_PARTS}")
+        X = self._start_fit(X)
+        if self.columns is None:
+            dates = [c for c in X.columns if pd.api.types.is_datetime64_any_dtype(X[c])]
+        else:
+            dates = _selected(X, self.columns, numeric_only=False)
+        used = dates + [c for pair in (self.intervals or {}).values() for c in pair]
+        missing = [c for c in used if c not in X.columns]
+        if missing:
+            raise KeyError(f"Columns not found: {missing}")
+        not_dates = sorted({str(c) for c in used if not pd.api.types.is_datetime64_any_dtype(X[c])})
+        if not_dates:
+            raise TypeError(f"Not date columns: {not_dates}. Convert them first with dst.to_datetime_columns()")
+        clashes = [n for n in self._new_names(dates) if n in X.columns]
+        if clashes:
+            raise ValueError(f"Columns already exist: {clashes}")
+        self.date_columns_ = dates
+        return self
+
+    def _new_names(self, dates: Sequence[Any]) -> list[str]:
+        return [f"{c}_{p}" for c in dates for p in self.parts] + list(self.intervals or {})
+
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        check_is_fitted(self)
+        pairs = dict(self.intervals or {})
+        result = self._start_transform(X, self.date_columns_ + [c for pair in pairs.values() for c in pair])
+        for col in self.date_columns_:
+            values = pd.to_datetime(X[col])
+            at = list(result.columns).index(col) + 1
+            for offset, part in enumerate(self.parts):
+                piece = getattr(values.dt, _DT_ATTR.get(part, part)).astype("float")
+                result.insert(at + offset, f"{col}_{part}", piece.to_numpy())
+        for name, (start, end) in pairs.items():
+            result[name] = ((pd.to_datetime(X[end]) - pd.to_datetime(X[start])).dt.total_seconds() / 86400).to_numpy()
+        if self.drop_original:
+            used = set(self.date_columns_) | {c for p in pairs.values() for c in p}
+            result = result.drop(columns=[c for c in result.columns if c in used])
+        return result
+
+    def _output_names(self, names: list[Any]) -> list[Any]:
+        pairs = dict(self.intervals or {})
+        used = set(self.date_columns_) | {c for p in pairs.values() for c in p}
+        out: list[Any] = []
+        for name in names:
+            if not (self.drop_original and name in used):
+                out.append(name)
+            if name in self.date_columns_:
+                out += [f"{name}_{p}" for p in self.parts]
+        return out + list(pairs)

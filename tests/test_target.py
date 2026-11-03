@@ -131,7 +131,7 @@ def test_pipeline_runs_and_keeps_learned_steps_inside_the_pipeline():
     assert 0.5 < scope["scores"].mean() <= 1.0
     assert scope["baseline"].mean() == pytest.approx(0.5)              # ROC AUC of a constant guess
     assert "from sklearn.dummy import DummyClassifier" in code
-    assert list(scope["X"].columns) == ["age", "income", "plan", "smoker", "cost_text"]
+    assert list(scope["X"].columns) == ["age", "income", "plan", "smoker", "cost_text", "admitted"]
 
 
 def test_pipeline_without_the_leaks_scores_far_below_with_them():
@@ -206,7 +206,7 @@ def test_pipeline_runs_on_messy_data():
     assert code.index("dst.remove_duplicates") < code.index("X = df[")
     assert "dst.standardize_labels(df, 'sex'" in code
     scope = run(code, df)
-    assert set(scope["X"].columns) == {"age", "visits", "sex"}
+    assert set(scope["X"].columns) == {"age", "visits", "sex", "date_of_birth"}
     assert len(scope["X"]) == 200
 
 
@@ -319,3 +319,22 @@ def test_pipeline_groups_rare_categories_of_many_valued_columns():
     scope = run(code, df)
     width = scope["model"].fit(scope["X"], scope["y"])[:-1].transform(scope["X"]).shape[1]
     assert width < 20                                                  # not 128 one-hot columns
+
+
+def test_pipeline_turns_dates_into_features():
+    rng = np.random.default_rng(9)
+    n = 400
+    admitted = pd.Timestamp("2024-01-01") + pd.to_timedelta(rng.integers(0, 365, n), unit="D")
+    stay = rng.integers(1, 15, n)
+    df = pd.DataFrame({"admitted": admitted.strftime("%Y-%m-%d"),                    # text dates: converted first
+                       "discharged": admitted + pd.to_timedelta(stay, unit="D"),      # already dates
+                       "age": rng.normal(60, 10, n).round(),
+                       "readmitted": np.where(stay + rng.normal(0, 2, n) > 9, "yes", "no")})
+    code = dst.profile(df, charts=False, target="readmitted").pipeline()
+    assert "dst.to_datetime_columns(df, ['admitted'])" in code.split("X = df[")[0]
+    assert "dst.DateFeatures(['admitted', 'discharged'])" in code
+    assert "intervals={'days': ('admitted', 'discharged')}" in code
+    run(code, df)
+    stay_step = "dst.DateFeatures(['admitted', 'discharged'], intervals={'stay': ('admitted', 'discharged')})"
+    with_stay = code.replace("dst.DateFeatures(['admitted', 'discharged'])", stay_step)
+    assert run(with_stay, df)["scores"].mean() > run(code, df)["scores"].mean() + 0.1   # the duration is the signal
