@@ -56,6 +56,7 @@ print(report.pipeline())   # a leak-free scikit-learn starter, ready to run
 - **Possible leaks:** features almost perfectly related to the target, by value or by whether they're blank. On the Titanic, `boat` is blank for 99% of the people who died and filled in for 95% of those who survived: it was recorded after the sinking.
 - **Blanks related to the target**, such as missing ages, where filling the gap would hide information unless a flag column keeps it.
 - The target itself gets no fill, encoding or outlier advice; rows without a target are dropped.
+- **Repeated identifiers:** an ID column whose values repeat (several admissions per patient, several bookings per customer) gets a warning. With `profile(..., group="patient_id")`, `pipeline()` splits by that column (`StratifiedGroupKFold` or `GroupKFold`), so the same patient is never in both training and test folds. A random split lets the model recognise patients it has already seen, and scores look better than they will be on new patients.
 
 `report.pipeline()` turns the suggestions into a starter script. Steps that learn nothing from the data (type fixes, log transforms) run before the split. Steps that learn from it (fill values, outlier bounds, categories) go inside a scikit-learn `Pipeline` of dstoolkit transformers, so cross-validation refits them on each training fold. Leaks, identifiers and dates are left out of the features, with a comment saying why:
 
@@ -205,7 +206,7 @@ On the data they were fitted on, they give the same results as `fill_missing`, `
 
 | Function / method | What it does |
 |---|---|
-| `profile(df, title, charts, max_categories, missing_ok, rules, checks, related, target, task, after_outcome)` | Builds the report; `missing_ok` names columns where blank is meaningful (no fill/drop advice); `rules`/`checks` add a Validation section; `related=False` leaves out the Related columns section; `target` adds a Target section (see [Prepare for a model](#prepare-for-a-model)); `after_outcome` names columns you know were recorded after the outcome, treated as leaks |
+| `profile(df, title, charts, max_categories, missing_ok, rules, checks, related, target, task, after_outcome, group)` | Builds the report; `missing_ok` names columns where blank is meaningful (no fill/drop advice); `rules`/`checks` add a Validation section; `related=False` leaves out the Related columns section; `target` adds a Target section (see [Prepare for a model](#prepare-for-a-model)); `after_outcome` names columns you know were recorded after the outcome, treated as leaks; `group` names the column identifying a patient or customer with several rows, so `pipeline()` uses grouped folds |
 | `report.save(path)` / `report.to_html()` | Self-contained HTML file or string |
 | `report.summary()` | One row per column: type, missing, unique values, outliers |
 | `report.suggestions` | The suggested steps as data (column, severity, message) |

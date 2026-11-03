@@ -71,6 +71,7 @@ LEAK_STRENGTH = 0.9          # a feature this strongly related to the target may
 MISSING_SIGNAL = 0.1         # blanks related to the target at least this strongly are worth a flag
 IMBALANCE_SHARE = 0.10       # smallest class below this share: the target is imbalanced
 CLASSIFICATION_MAX_VALUES = 10  # a numeric target with at most this many whole-number values is a class label
+REPEAT_MIN_SHARE = 0.02      # an ID column is "repeating" when at least this share of rows share a value
 
 # Order suggested steps are applied in, matching dst.clean()
 STEP_ORDER = {"duplicates": 0, "drop": 1, "type": 2, "missing": 3, "outliers": 4, "transform": 5,
@@ -142,7 +143,7 @@ class Profile:
                  validation: ValidationReport | None = None,
                  associations: pd.DataFrame | None = None,
                  associations_skipped: str | None = None,
-                 target: TargetProfile | None = None) -> None:
+                 target: TargetProfile | None = None, group: str | None = None) -> None:
         self.title = title
         self.n_rows = n_rows
         self.n_columns = n_columns
@@ -157,6 +158,7 @@ class Profile:
         self.associations = associations
         self.associations_skipped = associations_skipped
         self.target = target
+        self.group = group
 
     # ----- data views -----
 
@@ -272,7 +274,8 @@ class Profile:
         encoded = set(cols("encode"))
         unencoded = [n for n, k in kinds.items() if k == "categorical" and n not in encoded
                      and n not in converted and n != t.name]
-        excluded = {t.name, *dropped, *dates, *identifiers, *t.leaks, *unencoded}
+        grouped = self.group
+        excluded = {t.name, *dropped, *dates, *identifiers, *t.leaks, *unencoded, *([grouped] if grouped else [])}
         features = [n for n in kinds if n not in excluded]
         booleans = [n for n in features if kinds[n] == "boolean" or n in cols("to_boolean")]
 
@@ -321,14 +324,25 @@ class Profile:
         guess = "the most common class" if classify else "the average"
         steps.append(f"{model}(random_state=0),   # accepts blanks and needs no scaling")
 
-        if not classify:
-            folds, scoring = "KFold(5, shuffle=True, random_state=0)", "neg_root_mean_squared_error"
+        if grouped and classify:
+            splitter = "StratifiedGroupKFold"
+            folds = (f"{splitter}(5, shuffle=True, random_state=0)   "
+                     f"# each {grouped} in one fold only; class shares kept as far as possible")
+        elif grouped:
+            splitter = "GroupKFold"
+            folds = f"{splitter}(5)   # each {grouped} in one fold only"
+        elif classify:
+            splitter = "StratifiedKFold"
+            folds = f"{splitter}(5, shuffle=True, random_state=0)   # keeps each class's share in every fold"
         else:
-            folds = "StratifiedKFold(5, shuffle=True, random_state=0)   # keeps each class's share in every fold"
-            scoring = "roc_auc" if t.classes is not None and len(t.classes) == 2 else "balanced_accuracy"
+            splitter, folds = "KFold", "KFold(5, shuffle=True, random_state=0)"
+        scoring = ("neg_root_mean_squared_error" if not classify else
+                   "roc_auc" if t.classes is not None and len(t.classes) == 2 else "balanced_accuracy")
+        groups_arg = ", groups=groups" if grouped else ""
         left_out = [("recorded after the outcome (after_outcome)", t.after_outcome),
                     ("possible leaks: check they were known before the outcome", t.leaks),
                     ("suggested for dropping", [c for c in dropped if c != t.name and c not in t.leaks]),
+                    ("the group column: used to split, not to predict", [grouped] if grouped else []),
                     ("identifiers or free text", identifiers),
                     ("dates: turn into features first if they matter", dates),
                     ("categories with no encoding suggested", unencoded)]
@@ -336,7 +350,7 @@ class Profile:
                  "import dstoolkit as dst",
                  f"from sklearn.dummy import {dummy}",
                  f"from sklearn.ensemble import {model}",
-                 f"from sklearn.model_selection import {'StratifiedKFold' if classify else 'KFold'}, cross_val_score",
+                 f"from sklearn.model_selection import {splitter}, cross_val_score",
                  "from sklearn.pipeline import make_pipeline", "",
                  "# 1. Steps that learn nothing from the data: safe before the split", *before]
         if not before:
@@ -356,14 +370,16 @@ class Profile:
             listed.update(fresh)
             if fresh:
                 lines.append(f"# Left out ({why}): {', '.join(fresh)}")
-        lines += [f"X = {d}[{features!r}]", f"y = {d}[{t.name!r}]", "",
+        lines += [f"X = {d}[{features!r}]", f"y = {d}[{t.name!r}]",
+                  *([f"groups = {d}[{grouped!r}]   # rows of the same {grouped} stay together"] if grouped else []),
+                  "",
                   "# 3. Steps that learn from the data: inside the pipeline, refitted on each training fold",
                   "# To use a model that can't handle blanks (e.g. LogisticRegression): fill every column,",
                   "# and add dst.Scaler(...) before a linear or distance-based model",
                   "model = make_pipeline(", *[f"    {step}" for step in steps], ")", "",
                   f"folds = {folds}",
-                  f"scores = cross_val_score(model, X, y, cv=folds, scoring={scoring!r})",
-                  f"baseline = cross_val_score({dummy}(), X, y, cv=folds, scoring={scoring!r})   "
+                  f"scores = cross_val_score(model, X, y, cv=folds, scoring={scoring!r}{groups_arg})",
+                  f"baseline = cross_val_score({dummy}(), X, y, cv=folds, scoring={scoring!r}{groups_arg})   "
                   f"# always predicts {guess}",
                   f'print(f"model:    {scoring} {{scores.mean():.3f}} ± {{scores.std():.3f}}")',
                   f'print(f"baseline: {scoring} {{baseline.mean():.3f}}   (no skill: the score to beat)")']
@@ -534,7 +550,7 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
             rules: Mapping[Hashable, ColumnRule] | None = None,
             checks: Mapping[str, Comparison] | None = None, related: bool = True,
             target: Hashable | None = None, task: Literal["auto", "classification", "regression"] = "auto",
-            after_outcome: Iterable[Hashable] = ()) -> Profile:
+            after_outcome: Iterable[Hashable] = (), group: Hashable | None = None) -> Profile:
     """Profile a DataFrame: overview, per-column statistics, correlations and
     suggested cleaning steps.
 
@@ -561,6 +577,11 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
                    disposition, a follow-up code, a cancellation date). They're
                    treated as leaks even when the statistics don't show it, and
                    `pipeline()` leaves them out. Needs `target`.
+    group: the column that identifies one patient, customer or other entity
+           when it can have several rows. `pipeline()` then splits by it
+           (grouped cross-validation), so the same entity is never in both
+           training and test folds, and leaves it out of the features. Without
+           `group`, an identifier column whose values repeat gets a warning.
     """
     if df.shape[1] == 0:
         raise ValueError("DataFrame has no columns")
@@ -570,6 +591,8 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
 
     if target is not None and target not in df.columns:
         raise KeyError(f"target {target!r} is not a column")
+    if group is not None and (group not in df.columns or group == target):
+        raise KeyError(f"group {group!r} is not a column, or is the target")
     declared = list(after_outcome)
     if declared and target is None:
         raise ValueError("after_outcome needs target: it marks columns recorded after the outcome a model predicts")
@@ -628,6 +651,12 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
         suggestions = [s for s in suggestions if s.column != target_profile.name or s.step == "type"]
         suggestions.extend(target_suggestions)
 
+    if group is None:
+        dropping = {s.column for s in suggestions if s.action == "drop"}
+        suggestions.extend(s for s in _repeated_ids(df, target) if s.column not in dropping)
+    else:
+        suggestions = [s for s in suggestions if s.column != str(group) or s.step == "type"]
+
     order = {"high": 0, "medium": 1, "low": 2}
     suggestions.sort(key=lambda s: (STEP_ORDER.get(s.step, 9), order[s.severity]))
 
@@ -636,7 +665,32 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
                    memory_bytes=int(df.memory_usage(deep=True).sum()), columns=columns,
                    correlations=correlations, correlation_chart=corr_chart, suggestions=suggestions,
                    validation=validation, associations=related_pairs, associations_skipped=related_skipped,
-                   target=target_profile)
+                   target=target_profile, group=None if group is None else str(group))
+
+
+def _repeated_ids(df: pd.DataFrame, target: Hashable | None) -> list[Suggestion]:
+    """Identifier columns whose values repeat: several rows per patient or customer."""
+    out: list[Suggestion] = []
+    for col in df.columns:
+        if col == target:
+            continue
+        series = df[col].dropna()
+        if series.empty or pd.api.types.is_float_dtype(series):
+            continue
+        counts = series.value_counts()
+        named_id = ID_NAME_HINT.search(str(col)) is not None
+        if not named_id and not (_kind(df[col]) == "text" and counts.size >= 0.6 * len(series)):
+            continue   # neither named like an ID nor mostly unique text
+        repeated = counts[counts > 1]
+        rows = int(repeated.sum())
+        if repeated.empty or counts.size < 0.2 * len(series) or rows < REPEAT_MIN_SHARE * len(series):
+            continue   # few distinct values: a category, not an identifier
+        out.append(Suggestion(str(col), "note", "medium",
+                              f"{len(repeated):,} value(s) appear in more than one row ({rows:,} rows). If each value "
+                              f"identifies one patient, customer or booking, a random split puts the same one "
+                              f"in training and test data and inflates scores: pass group={str(col)!r} to "
+                              f"profile(), and pipeline() splits by it."))
+    return out
 
 
 def _task(series: pd.Series, task: str) -> Task:

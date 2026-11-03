@@ -254,3 +254,53 @@ def test_fitted_pipeline_survives_saving_and_loading(tmp_path):
     again = joblib.load(path)
     np.testing.assert_array_equal(again.predict_proba(X), model.predict_proba(X))
     assert list(again[:-1].get_feature_names_out()) == list(model[:-1].get_feature_names_out())
+
+
+def admissions(patients_n: int = 150, per_patient: int = 4, seed: int = 6) -> pd.DataFrame:
+    """Several admissions per patient. Readmission depends on a hidden per-patient trait only, and each patient
+    has a fixed but meaningless `baseline_score`: a model can memorise patients by it, nothing more."""
+    rng = np.random.default_rng(seed)
+    trait = rng.random(patients_n) < 0.4
+    score = rng.normal(size=patients_n)
+    rows = np.repeat(np.arange(patients_n), per_patient)
+    return pd.DataFrame({
+        "mrn": [f"M{p:05d}" for p in rows],
+        "baseline_score": score[rows],
+        "age": rng.normal(60, 10, len(rows)).round(),
+        "readmitted": np.where(trait[rows] ^ (rng.random(len(rows)) < 0.1), "yes", "no"),
+    })
+
+
+def test_repeated_identifiers_are_flagged():
+    df = admissions()
+    r = dst.profile(df, charts=False, target="readmitted")
+    note = next(s for s in r.suggestions if s.column == "mrn" and "more than one row" in s.message)
+    assert "150 value(s)" in note.message and "group='mrn'" in note.message
+    unique = dst.profile(patients(), charts=False)                   # one row per patient: no warning
+    assert not any("more than one row" in s.message for s in unique.suggestions)
+    few = pd.DataFrame({"plan_code": ["A", "B"] * 50, "x": range(100)})   # a category, not an identifier
+    assert not any("more than one row" in s.message for s in dst.profile(few, charts=False).suggestions)
+
+
+def test_grouped_folds_stop_patients_leaking_between_folds():
+    df = admissions()
+    plain = run(dst.profile(df, charts=False, target="readmitted").pipeline(), df)["scores"].mean()
+    report = dst.profile(df, charts=False, target="readmitted", group="mrn")
+    assert report.group == "mrn"
+    assert not any("more than one row" in s.message for s in report.suggestions)
+    code = report.pipeline()
+    assert "StratifiedGroupKFold" in code and "groups=groups" in code
+    assert "# Left out (the group column: used to split, not to predict): mrn" in code
+    grouped = run(code, df)["scores"].mean()
+    assert plain > 0.7          # memorised patients: looks good
+    assert grouped < 0.6        # honest: the features carry no real signal
+    assert plain - grouped > 0.15
+
+
+def test_grouped_regression_and_bad_group():
+    df = admissions().assign(cost=lambda d: d["age"] * 10 + np.random.default_rng(7).normal(0, 50, len(d)))
+    code = dst.profile(df.drop(columns="readmitted"), charts=False, target="cost", group="mrn").pipeline()
+    assert "GroupKFold(5)" in code
+    run(code, df.drop(columns="readmitted"))
+    with pytest.raises(KeyError, match="group"):
+        dst.profile(df, charts=False, target="cost", group="cost")
