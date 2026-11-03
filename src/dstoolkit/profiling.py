@@ -71,6 +71,7 @@ LEAK_STRENGTH = 0.9          # a feature this strongly related to the target may
 MISSING_SIGNAL = 0.1         # blanks related to the target at least this strongly are worth a flag
 IMBALANCE_SHARE = 0.10       # smallest class below this share: the target is imbalanced
 CLASSIFICATION_MAX_VALUES = 10  # a numeric target with at most this many whole-number values is a class label
+RARE_SHARE = 0.01            # pipeline(): categories rarer than this share are grouped into "Other"
 REPEAT_MIN_SHARE = 0.02      # an ID column is "repeating" when at least this share of rows share a value
 
 # Order suggested steps are applied in, matching dst.clean()
@@ -315,9 +316,15 @@ class Profile:
         capped = [c for c in cols("cap_outliers") if c in features]
         if capped:
             steps.append(f"dst.OutlierCapper(columns={capped}),")
-        encodings = {str(s.column): s.options["method"] for s in by_action.get("encode", []) if s.column in features}
+        encoders = by_action.get("encode", [])
+        encodings = {str(s.column): s.options["method"] for s in encoders
+                     if s.column in features and not s.options.get("many")}
         if encodings:
             steps.append(f"dst.CategoryEncoder({encodings!r}, drop_original=True),")
+        many = {str(s.column): s.options["method"] for s in encoders if s.column in features and s.options.get("many")}
+        if many:
+            steps.append(f"dst.CategoryEncoder({many!r}, min_frequency={RARE_SHARE}, drop_original=True),   "
+                         f"# categories under {RARE_SHARE:.0%} of rows become 'Other'")
         classify = t.task == "classification"
         model = "HistGradientBoostingClassifier" if classify else "HistGradientBoostingRegressor"
         dummy = "DummyClassifier" if classify else "DummyRegressor"
@@ -949,9 +956,10 @@ def _profile_column(series: pd.Series, name: str, charts: bool, max_categories: 
                 # not label codes: numbering unordered categories invents an order (2 > 1) that linear
                 # and distance-based models take literally
                 suggest("encode", "low", f"{categories} categories; one-hot encode (adds {categories} columns). "
-                        f"Group rare categories into 'Other' first if many are small. Label codes suit "
+                        f"Group rare categories into 'Other' first if many are small "
+                        f"(dst.CategoryEncoder(min_frequency=...)). Label codes suit "
                         f"tree-based models only: they imply an order the categories don't have.", "encode",
-                        method="onehot")
+                        method="onehot", many=True)
 
         if 0 < share < MOSTLY_EMPTY and kind == "boolean" and share >= 0.05:
             # a True/False column can't hold a "Missing" label; its gaps can simply stay missing

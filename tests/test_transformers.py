@@ -206,3 +206,32 @@ def test_missing_flags_for_named_columns_only(train):
         dst.MissingFiller(add_indicator="age").fit(train)
     with pytest.raises(ValueError, match="already exist"):
         dst.MissingFiller(add_indicator=["age"]).fit(train.assign(age_missing=0))
+
+
+# ---------- rare categories ----------
+
+@pytest.fixture
+def codes():
+    return pd.DataFrame({"dx": ["A"] * 5 + ["B"] * 4 + ["C", "D", None]})
+
+
+def test_rare_categories_are_grouped_into_other(codes):
+    enc = dst.CategoryEncoder(["dx"], min_frequency=2).fit(codes)
+    assert enc.categories_ == {"dx": ["A", "B", "Other"]} and enc.rare_ == {"dx": ["C", "D"]}
+    out = enc.transform(pd.DataFrame({"dx": ["A", "C", "Z", None]}))       # Z wasn't in training
+    assert out[["dx_A", "dx_B", "dx_Other"]].values.tolist() == [[1, 0, 0], [0, 0, 1], [0, 0, 1], [0, 0, 0]]
+    assert list(enc.get_feature_names_out()) == list(out.columns)
+    label = dst.CategoryEncoder({"dx": "label"}, min_frequency=0.2).fit(codes)    # 20% of 11 values
+    assert label.transform(pd.DataFrame({"dx": ["C"]}))["dx_label"].tolist() == [2]
+
+
+def test_rare_grouping_learns_from_training_only_and_checks_input(codes):
+    enc = dst.CategoryEncoder(["dx"], min_frequency=2).fit(codes)
+    many_c = pd.DataFrame({"dx": ["C"] * 50})                  # common in new data, rare in training
+    assert enc.transform(many_c)["dx_Other"].eq(1).all()
+    assert dst.CategoryEncoder(["dx"]).fit(codes).rare_ == {"dx": []}       # off by default
+    real_other = pd.DataFrame({"dx": ["Other", "Other", "A", "A", "Q"]})    # a real "Other" absorbs the rare ones
+    assert dst.CategoryEncoder(["dx"], min_frequency=2).fit(real_other).categories_ == {"dx": ["A", "Other"]}
+    for bad in (0, 1.0, -0.5, True, "few"):
+        with pytest.raises(ValueError, match="min_frequency"):
+            dst.CategoryEncoder(["dx"], min_frequency=bad).fit(codes)

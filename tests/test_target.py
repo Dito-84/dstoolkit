@@ -304,3 +304,18 @@ def test_grouped_regression_and_bad_group():
     run(code, df.drop(columns="readmitted"))
     with pytest.raises(KeyError, match="group"):
         dst.profile(df, charts=False, target="cost", group="cost")
+
+
+def test_pipeline_groups_rare_categories_of_many_valued_columns():
+    rng = np.random.default_rng(8)
+    n = 600
+    common = [f"D{i}" for i in range(8)]
+    rare = [f"R{i:03d}" for i in range(120)]                           # many codes seen a handful of times
+    dx = np.where(rng.random(n) < 0.7, rng.choice(common, n), rng.choice(rare, n))
+    df = pd.DataFrame({"dx": dx, "age": rng.normal(60, 10, n).round(),
+                       "readmitted": rng.choice(["yes", "no"], n)})
+    code = dst.profile(df, charts=False, target="readmitted").pipeline()
+    assert "dst.CategoryEncoder({'dx': 'onehot'}, min_frequency=0.01, drop_original=True)" in code
+    scope = run(code, df)
+    width = scope["model"].fit(scope["X"], scope["y"])[:-1].transform(scope["X"]).shape[1]
+    assert width < 20                                                  # not 128 one-hot columns
