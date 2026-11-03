@@ -144,7 +144,8 @@ class Profile:
                  validation: ValidationReport | None = None,
                  associations: pd.DataFrame | None = None,
                  associations_skipped: str | None = None,
-                 target: TargetProfile | None = None, group: str | None = None) -> None:
+                 target: TargetProfile | None = None, group: str | None = None,
+                 sampled: int | None = None) -> None:
         self.title = title
         self.n_rows = n_rows
         self.n_columns = n_columns
@@ -160,6 +161,7 @@ class Profile:
         self.associations_skipped = associations_skipped
         self.target = target
         self.group = group
+        self.sampled = sampled   # rows profiled, when profile(sample=...) used a sample
 
     # ----- data views -----
 
@@ -413,6 +415,8 @@ class Profile:
             ("Missing cells", f"{self.missing_cells:,} ({missing_pct:.1f}%)"),
             ("Memory", _human_bytes(self.memory_bytes)),
         ]
+        if self.sampled:
+            tiles.append(("Profiled", f"random {self.sampled:,} rows"))
         v = self.validation
         if v is not None:
             tiles.append(("Rules failed", f"{len(v.failed_rules)} of {len(v.results)}"))
@@ -421,6 +425,10 @@ class Profile:
                      f'<div class="dst-tile"><div class="dst-label">{e(k)}</div>'
                      f'<div class="dst-value">{e(v)}</div></div>'
                      for k, v in tiles) + "</div>"]
+        if self.sampled:
+            parts.append(f'<p class="dst-note">Column statistics, suggestions and the sections below come from a '
+                         f'random sample of {self.sampled:,} of the {self.n_rows:,} rows; the counts above use '
+                         f"every row.</p>")
 
         if v is not None:
             parts.append(_validation_html(v))
@@ -566,7 +574,8 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
             rules: Mapping[Hashable, ColumnRule] | None = None,
             checks: Mapping[str, Comparison] | None = None, related: bool = True,
             target: Hashable | None = None, task: Literal["auto", "classification", "regression"] = "auto",
-            after_outcome: Iterable[Hashable] = (), group: Hashable | None = None) -> Profile:
+            after_outcome: Iterable[Hashable] = (), group: Hashable | None = None,
+            sample: int | None = None) -> Profile:
     """Profile a DataFrame: overview, per-column statistics, correlations and
     suggested cleaning steps.
 
@@ -598,6 +607,11 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
            (grouped cross-validation), so the same entity is never in both
            training and test folds, and leaves it out of the features. Without
            `group`, an identifier column whose values repeat gets a warning.
+    sample: on a large dataset, profile a random sample of this many rows
+            (always the same rows, so reruns match). The overview's row,
+            duplicate and missing counts and the validation still use every
+            row; column statistics, suggestions, related columns and the
+            target section use the sample, and the report says so.
     """
     if df.shape[1] == 0:
         raise ValueError("DataFrame has no columns")
@@ -625,9 +639,15 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
     if unknown:
         raise KeyError(f"missing_ok names columns that don't exist: {unknown}")
 
+    if sample is not None and (isinstance(sample, bool) or not isinstance(sample, int) or sample < 2):
+        raise ValueError("sample must be a whole number of rows, 2 or more")
+    full = df
+    if sample is not None and len(df) > sample:
+        df = df.sample(n=sample, random_state=0)
+
     columns: list[ColumnProfile] = []
     suggestions: list[Suggestion] = []
-    duplicates = int(df.duplicated().sum())
+    duplicates = int(full.duplicated().sum())
     if duplicates:
         suggestions.append(Suggestion(None, "duplicates", "high",
                                       f"{duplicates:,} duplicate row(s).", "remove_duplicates"))
@@ -676,12 +696,13 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
     order = {"high": 0, "medium": 1, "low": 2}
     suggestions.sort(key=lambda s: (STEP_ORDER.get(s.step, 9), order[s.severity]))
 
-    return Profile(title=title, n_rows=len(df), n_columns=df.shape[1], duplicates=duplicates,
-                   missing_cells=int(df.isna().sum().sum()),
-                   memory_bytes=int(df.memory_usage(deep=True).sum()), columns=columns,
+    return Profile(title=title, n_rows=len(full), n_columns=df.shape[1], duplicates=duplicates,
+                   missing_cells=int(full.isna().sum().sum()),
+                   memory_bytes=int(full.memory_usage(deep=True).sum()), columns=columns,
                    correlations=correlations, correlation_chart=corr_chart, suggestions=suggestions,
                    validation=validation, associations=related_pairs, associations_skipped=related_skipped,
-                   target=target_profile, group=None if group is None else str(group))
+                   target=target_profile, group=None if group is None else str(group),
+                   sampled=len(df) if len(df) < len(full) else None)
 
 
 def _repeated_ids(df: pd.DataFrame, target: Hashable | None) -> list[Suggestion]:

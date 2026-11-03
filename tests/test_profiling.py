@@ -324,3 +324,20 @@ def test_related_columns_list_the_strongest_twenty():
     r = dst.profile(df, charts=False)
     assert len(r.associations) == 28
     assert "Showing the strongest 20 of 28 pairs" in r.to_html()
+
+
+def test_sample_profiles_a_fixed_random_subset(messy):
+    big = pd.concat([messy] * 20, ignore_index=True)                    # 4,040 rows, many duplicates
+    r = dst.profile(big, charts=False, sample=500)
+    assert r.sampled == 500 and r.n_rows == 4040
+    assert r.duplicates == int(big.duplicated().sum())                   # overview counts use every row
+    assert r.missing_cells == int(big.isna().sum().sum())
+    assert sum(c.count + c.missing for c in r.columns[:1]) == 500        # column statistics use the sample
+    assert "random sample of 500 of the 4,040 rows" in r.to_html()
+    again = dst.profile(big, charts=False, sample=500)
+    assert [s.message for s in again.suggestions] == [s.message for s in r.suggestions]   # same rows each time
+    small = dst.profile(messy, charts=False, sample=10_000)               # smaller than the sample: every row
+    assert small.sampled is None and "random sample" not in small.to_html()
+    for bad in (0, 1, 2.5, True):
+        with pytest.raises(ValueError, match="sample"):
+            dst.profile(messy, charts=False, sample=bad)
