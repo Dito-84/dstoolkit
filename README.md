@@ -78,7 +78,10 @@ model = make_pipeline(
 
 It ends by scoring a no-skill baseline on the same folds, so the result has something to beat: on the Titanic, ROC AUC 0.856 against 0.500 for always guessing the most common class. The model accepts blanks and needs no scaling; the script says what to add before swapping in one that doesn't, such as logistic regression.
 
-It's a starting point to review, not a finished model: whether a flagged column really leaks, and which model to use, are your decisions.
+It's a starting point to review, not a finished model: whether a flagged column really leaks, and which model to use, are your decisions. Two parameters record those decisions:
+
+- `profile(..., after_outcome=["body"])` marks columns you know were recorded after the outcome. The statistics can miss them: on the Titanic, `body` (a body identification number) only exists for people who died, but so few bodies were recovered that its blanks look only moderately related to survival.
+- `report.pipeline(missing_flags=["age"])` keeps a 0/1 flag for blanks that carry signal. Flags are never added unless you ask, because a blank recorded after the outcome leaks the answer.
 
 ## Clean in one call
 
@@ -167,7 +170,7 @@ cross_val_score(model, X, y, cv=folds)   # cleaning is refitted on each training
 
 | Transformer | Learns in `fit()` | Applies in `transform()` |
 |---|---|---|
-| `MissingFiller(numeric, categorical, columns)` | Mean, median or zero for numbers; most frequent value or "Missing" for text (`fill_values_`) | Fills gaps with those values. Date gaps stay missing; no rows are dropped |
+| `MissingFiller(numeric, categorical, columns, add_indicator)` | Mean, median or zero for numbers; most frequent value or "Missing" for text (`fill_values_`); with `add_indicator`, which columns get a flag (`indicator_columns_`) | Fills gaps with those values. Date gaps stay missing; no rows are dropped. `add_indicator=True` (columns with gaps in training) or a list adds a 0/1 `<column>_missing` flag first, so a blank that carries signal isn't lost |
 | `OutlierCapper(columns, method, threshold)` | IQR or z-score bounds (`bounds_`) | Caps values at the bounds; rows are kept |
 | `CategoryEncoder(columns, handle_unknown, drop_original)` | The categories in each column (`categories_`) | One-hot or label codes for those categories. Unseen categories are ignored (zeros, or a missing label) or raise an error |
 | `Scaler(columns)` | Min and range, or mean and standard deviation (`stats_`) | Min-max or z-score scaling with the training numbers |
@@ -202,12 +205,12 @@ On the data they were fitted on, they give the same results as `fill_missing`, `
 
 | Function / method | What it does |
 |---|---|
-| `profile(df, title, charts, max_categories, missing_ok, rules, checks, related, target, task)` | Builds the report; `missing_ok` names columns where blank is meaningful (no fill/drop advice); `rules`/`checks` add a Validation section; `related=False` leaves out the Related columns section; `target` adds a Target section (see [Prepare for a model](#prepare-for-a-model)) |
+| `profile(df, title, charts, max_categories, missing_ok, rules, checks, related, target, task, after_outcome)` | Builds the report; `missing_ok` names columns where blank is meaningful (no fill/drop advice); `rules`/`checks` add a Validation section; `related=False` leaves out the Related columns section; `target` adds a Target section (see [Prepare for a model](#prepare-for-a-model)); `after_outcome` names columns you know were recorded after the outcome, treated as leaks |
 | `report.save(path)` / `report.to_html()` | Self-contained HTML file or string |
 | `report.summary()` | One row per column: type, missing, unique values, outliers |
 | `report.suggestions` | The suggested steps as data (column, severity, message) |
 | `report.code(df_name)` | The suggested steps as runnable code, one call per kind of step. These functions learn from every row: use them for exploring, and `pipeline()` for models |
-| `report.pipeline(df_name)` | A leak-free modelling starter (needs `target`): stateless steps before the split, learned steps in a scikit-learn `Pipeline`, cross-validated against a no-skill baseline |
+| `report.pipeline(df_name, missing_flags)` | A leak-free modelling starter (needs `target`); `missing_flags` keeps 0/1 flags for the blanks you've judged were known before the outcome: stateless steps before the split, learned steps in a scikit-learn `Pipeline`, cross-validated against a no-skill baseline |
 | `report.validation` | The `ValidationReport` when `rules` or `checks` were given, otherwise `None` |
 | `report.target` | A `TargetProfile` when `target` was given: `task`, `classes`, `features` (each feature vs the target), `missingness`, `leaks`, `untested` |
 | `report.associations` | The related pairs, as returned by `associations()`. `None` when `related=False`, or above 30 columns, where the number of pairs makes it slow (`report.associations_skipped` says why); call `associations()` on the columns you need instead |

@@ -29,7 +29,7 @@ import base64
 import html
 import io
 import re
-from collections.abc import Hashable, Iterable, Mapping
+from collections.abc import Hashable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -130,6 +130,7 @@ class TargetProfile:
     missingness: pd.DataFrame      # features whose blanks are related to the target
     leaks: list[str]               # features that may give the answer away
     untested: list[str]            # features associations() couldn't test (IDs, dates, ...)
+    after_outcome: list[str] = field(default_factory=list)   # declared by the user: always leaks
 
 
 class Profile:
@@ -233,7 +234,7 @@ class Profile:
         return [line for line in lines if any(c in line for c in conversions)] + \
                [line for line in lines if not any(c in line for c in conversions)]
 
-    def pipeline(self, df_name: str = "df") -> str:
+    def pipeline(self, df_name: str = "df", missing_flags: Sequence[str] = ()) -> str:
         """A leak-free modelling starter as runnable Python: needs profile(target=...).
 
         Steps that learn nothing from the data (type fixes, log transforms,
@@ -245,6 +246,12 @@ class Profile:
         saying why. The model is a histogram gradient-boosting model, which
         accepts the remaining blanks and needs no scaling. A no-skill baseline is
         scored on the same folds, so the result has something to beat.
+
+        missing_flags: columns to keep a 0/1 `<column>_missing` flag for, because
+                       their blanks carry signal. Only list columns whose blanks
+                       were known before the outcome; other candidates appear as
+                       a comment. Flags learn nothing from the data, so they're
+                       made before the split, and work for dropped columns too.
         """
         t = self.target
         if t is None:
@@ -268,6 +275,18 @@ class Profile:
         excluded = {t.name, *dropped, *dates, *identifiers, *t.leaks, *unencoded}
         features = [n for n in kinds if n not in excluded]
         booleans = [n for n in features if kinds[n] == "boolean" or n in cols("to_boolean")]
+
+        if isinstance(missing_flags, str):
+            raise TypeError("missing_flags must be a list of column names, not one string")
+        gaps = {c.name for c in self.columns if c.missing}
+        bad = [c for c in missing_flags if c not in gaps or c == t.name]
+        if bad:
+            raise ValueError(f"missing_flags: {bad} have no blanks, or are the target or not columns")
+        leaky = [c for c in missing_flags if c in t.leaks]
+        if leaky:
+            raise ValueError(f"missing_flags: {leaky} are possible leaks; a flag would leak the answer too")
+        flags = list(missing_flags)
+        features += [f"{c}_missing" for c in flags]
 
         before = self._code_lines(d, [s for s in self.suggestions if s.action in
                                       ("remove_duplicates", "to_numeric", "to_boolean", "standardize")
@@ -307,7 +326,8 @@ class Profile:
         else:
             folds = "StratifiedKFold(5, shuffle=True, random_state=0)   # keeps each class's share in every fold"
             scoring = "roc_auc" if t.classes is not None and len(t.classes) == 2 else "balanced_accuracy"
-        left_out = [("possible leaks: check they were known before the outcome", t.leaks),
+        left_out = [("recorded after the outcome (after_outcome)", t.after_outcome),
+                    ("possible leaks: check they were known before the outcome", t.leaks),
                     ("suggested for dropping", [c for c in dropped if c != t.name and c not in t.leaks]),
                     ("identifiers or free text", identifiers),
                     ("dates: turn into features first if they matter", dates),
@@ -321,10 +341,14 @@ class Profile:
                  "# 1. Steps that learn nothing from the data: safe before the split", *before]
         if not before:
             lines.append("# (none needed)")
-        flags = [str(c) for c in t.missingness["column_2"] if c not in t.leaks]
         if flags:
-            lines.append("# Blanks related to the target: add a flag only if the blank was known before the outcome")
-            lines += [f"# {d}[{f'{c}_missing'!r}] = {d}[{c!r}].isna().astype(int)" for c in flags]
+            lines.append("# Was-missing flags you chose (they learn nothing from the data)")
+            lines += [f"{d}[{f'{c}_missing'!r}] = {d}[{c!r}].isna().astype(int)" for c in flags]
+        offered = [str(c) for c in t.missingness["column_2"] if c not in t.leaks and c not in flags]
+        if offered:
+            lines.append(f"# Blanks related to the target: {', '.join(offered)}. To keep one as a flag, pass "
+                         f"pipeline(missing_flags=[...]),")
+            lines.append("# but only if the blank was known before the outcome; otherwise the flag leaks the answer")
         lines += ["", "# 2. Features and target"]
         listed: set[str] = set()
         for why, names in left_out:
@@ -510,7 +534,7 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
             rules: Mapping[Hashable, ColumnRule] | None = None,
             checks: Mapping[str, Comparison] | None = None, related: bool = True,
             target: Hashable | None = None, task: Literal["auto", "classification", "regression"] = "auto",
-            ) -> Profile:
+            after_outcome: Iterable[Hashable] = ()) -> Profile:
     """Profile a DataFrame: overview, per-column statistics, correlations and
     suggested cleaning steps.
 
@@ -533,6 +557,10 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
             a leak-free scikit-learn starter.
     task: "classification" or "regression"; "auto" treats text, True/False and
           whole-number columns with at most 10 values as classes
+    after_outcome: columns you know were recorded after the outcome (a discharge
+                   disposition, a follow-up code, a cancellation date). They're
+                   treated as leaks even when the statistics don't show it, and
+                   `pipeline()` leaves them out. Needs `target`.
     """
     if df.shape[1] == 0:
         raise ValueError("DataFrame has no columns")
@@ -542,6 +570,12 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
 
     if target is not None and target not in df.columns:
         raise KeyError(f"target {target!r} is not a column")
+    declared = list(after_outcome)
+    if declared and target is None:
+        raise ValueError("after_outcome needs target: it marks columns recorded after the outcome a model predicts")
+    unknown_declared = [c for c in declared if c not in df.columns or c == target]
+    if unknown_declared:
+        raise KeyError(f"after_outcome names columns that don't exist or are the target: {unknown_declared}")
     if task not in ("auto", "classification", "regression"):
         raise ValueError(f'task must be "auto", "classification" or "regression", got {task!r}')
     validation = (validate(df, rules, checks, verbose=False)
@@ -590,7 +624,7 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
 
     target_profile = None
     if target is not None:
-        target_profile, target_suggestions = _profile_target(df, target, task)
+        target_profile, target_suggestions = _profile_target(df, target, task, [str(c) for c in declared])
         suggestions = [s for s in suggestions if s.column != target_profile.name or s.step == "type"]
         suggestions.extend(target_suggestions)
 
@@ -615,8 +649,8 @@ def _task(series: pd.Series, task: str) -> Task:
     return "classification" if whole and values.nunique() <= CLASSIFICATION_MAX_VALUES else "regression"
 
 
-def _profile_target(df: pd.DataFrame, target: Hashable,
-                    task: str) -> tuple[TargetProfile, list[Suggestion]]:
+def _profile_target(df: pd.DataFrame, target: Hashable, task: str,
+                    declared: list[str]) -> tuple[TargetProfile, list[Suggestion]]:
     name = str(target)
     series = df[target]
     kind = _task(series, task)
@@ -656,9 +690,14 @@ def _profile_target(df: pd.DataFrame, target: Hashable,
         missingness = found[(found["p_adjusted"] < 0.05) & (found["strength"] >= MISSING_SIGNAL)]
         missingness = missingness.reset_index(drop=True)
 
-    leaks: list[str] = []
+    leaks: list[str] = list(declared)
+    for column in declared:
+        out.append(Suggestion(column, "drop", "high", f"Recorded after the outcome (after_outcome): it can't be "
+                              f"known when predicting {name}. Leave it out of the model."))
     strong = features[(features["p_adjusted"] < 0.05) & (features["strength"].abs() >= LEAK_STRENGTH)]
     for r in strong.to_dict("records"):
+        if str(r["column_2"]) in declared:
+            continue
         leaks.append(str(r["column_2"]))
         out.append(Suggestion(str(r["column_2"]), "drop", "high",
                               f"Possible leak: almost perfectly related to {name} ({r['measure']} = "
@@ -666,6 +705,8 @@ def _profile_target(df: pd.DataFrame, target: Hashable,
                               f"leave it out of the model."))
     for r in missingness.to_dict("records"):
         column = str(r["column_2"])
+        if column in declared:
+            continue
         if r["strength"] >= LEAK_STRENGTH:
             if column not in leaks:
                 leaks.append(column)
@@ -676,10 +717,11 @@ def _profile_target(df: pd.DataFrame, target: Hashable,
         else:
             out.append(Suggestion(column, "note", "medium",
                                   f"Whether {column} is blank is related to {name} ({r['measure']} = "
-                                  f"{r['strength']:.2f}). If blanks were known before the outcome, keep a flag "
-                                  f"before filling: df[{f'{column}_missing'!r}] = df[{column!r}].isna()."))
+                                  f"{r['strength']:.2f}). If blanks were known before the outcome, keep them as "
+                                  f"a flag column: report.pipeline(missing_flags=[{column!r}]), or "
+                                  f"dst.MissingFiller(add_indicator=[{column!r}])."))
     return TargetProfile(name=name, task=kind, missing=missing, classes=classes, features=features,
-                         missingness=missingness, leaks=leaks, untested=untested), out
+                         missingness=missingness, leaks=leaks, untested=untested, after_outcome=declared), out
 
 
 def _rule_label(r: Any) -> str:

@@ -133,15 +133,25 @@ class MissingFiller(_FrameTransformer):
     fill_missing(), no rows are dropped. For k-nearest-neighbours filling, use
     scikit-learn's KNNImputer.
 
-    Learned: fill_values_ ({column: value}).
+    add_indicator: also add a 0/1 column `<column>_missing` that keeps where the
+                   gaps were, since filling hides that and a blank can carry
+                   signal (a test that wasn't ordered). True flags every selected
+                   column that had gaps in the training data; a list flags those
+                   columns. The flag goes right after its column. Only flag a
+                   column if its blanks were known before the outcome: a blank
+                   recorded afterwards leaks the answer.
+
+    Learned: fill_values_ ({column: value}) and indicator_columns_ (the flagged columns).
     """
 
     def __init__(self, numeric: TransformerNumericFill | None = "mean",
                  categorical: CategoricalFill | None = "most_frequent",
-                 columns: Sequence[str] | None = None) -> None:
+                 columns: Sequence[str] | None = None,
+                 add_indicator: bool | Sequence[str] = False) -> None:
         self.numeric = numeric
         self.categorical = categorical
         self.columns = columns
+        self.add_indicator = add_indicator
 
     def fit(self, X: pd.DataFrame, y: Any = None) -> MissingFiller:
         if self.numeric not in ("mean", "median", "zero", None):
@@ -162,11 +172,25 @@ class MissingFiller(_FrameTransformer):
             elif self.categorical == "missing" and not isinstance(X[col].dtype, pd.BooleanDtype):
                 values[col] = "Missing"
         self.fill_values_ = values
+        if isinstance(self.add_indicator, str):
+            raise TypeError("add_indicator must be True/False or a list of column names, not one string")
+        if self.add_indicator is True:
+            flagged = [c for c in _selected(X, self.columns, numeric_only=False) if X[c].isna().any()]
+        elif self.add_indicator is False:
+            flagged = []
+        else:
+            flagged = _selected(X, list(self.add_indicator), numeric_only=False)
+        clashes = [f"{c}_missing" for c in flagged if f"{c}_missing" in X.columns]
+        if clashes:
+            raise ValueError(f"Flag column(s) already exist: {clashes}")
+        self.indicator_columns_ = flagged
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
         check_is_fitted(self)
-        result = self._start_transform(X, list(self.fill_values_))
+        result = self._start_transform(X, list(self.fill_values_) + list(self.indicator_columns_))
+        for col in self.indicator_columns_:     # before filling, while the gaps are still there
+            result.insert(list(result.columns).index(col) + 1, f"{col}_missing", X[col].isna().astype(int))
         for col, value in self.fill_values_.items():
             if not result[col].isna().any():
                 continue
@@ -177,6 +201,15 @@ class MissingFiller(_FrameTransformer):
                     result[col] = result[col].cat.add_categories([value])
                 result[col] = result[col].fillna(value)
         return result
+
+    def _output_names(self, names: list[Any]) -> list[Any]:
+        flagged = set(getattr(self, "indicator_columns_", []))
+        out: list[Any] = []
+        for name in names:
+            out.append(name)
+            if name in flagged:
+                out.append(f"{name}_missing")
+        return out
 
 
 class OutlierCapper(_FrameTransformer):

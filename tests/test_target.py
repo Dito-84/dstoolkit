@@ -208,3 +208,49 @@ def test_pipeline_runs_on_messy_data():
     scope = run(code, df)
     assert set(scope["X"].columns) == {"age", "visits", "sex"}
     assert len(scope["X"]) == 200
+
+
+def test_after_outcome_marks_leaks_the_statistics_miss():
+    df = patients()
+    df["discharge_unit"] = np.random.default_rng(5).choice(["A", "B", "C"], len(df))   # unrelated, but recorded after
+    r = dst.profile(df, charts=False, target="readmitted", after_outcome=["discharge_unit"])
+    assert r.target.after_outcome == ["discharge_unit"] and "discharge_unit" in r.target.leaks
+    note = next(s for s in r.suggestions if s.column == "discharge_unit" and s.step == "drop")
+    assert "after the outcome" in note.message and note.action is None
+    code = r.pipeline()
+    assert "# Left out (recorded after the outcome (after_outcome)): discharge_unit" in code
+    assert "discharge_unit" not in code.split("X = df[")[1].split("\n")[0]
+    with pytest.raises(ValueError, match="needs target"):
+        dst.profile(df, charts=False, after_outcome=["discharge_unit"])
+    with pytest.raises(KeyError, match="after_outcome"):
+        dst.profile(df, charts=False, target="readmitted", after_outcome=["readmitted"])
+
+
+def test_missing_flags_are_opt_in():
+    df = patients()
+    r = dst.profile(df, charts=False, target="readmitted")
+    default = r.pipeline()
+    assert "_missing'] = " not in default                         # never applied unless asked
+    code = r.pipeline(missing_flags=["age"])
+    assert "df['age_missing'] = df['age'].isna().astype(int)" in code.split("X = df[")[0]
+    scope = run(code, df)
+    assert "age_missing" in scope["X"].columns
+    with pytest.raises(ValueError, match="possible leaks"):
+        r.pipeline(missing_flags=["followup_code"])
+    with pytest.raises(ValueError, match="no blanks"):
+        r.pipeline(missing_flags=["income"])
+    with pytest.raises(TypeError, match="not one string"):
+        r.pipeline(missing_flags="age")
+
+
+def test_fitted_pipeline_survives_saving_and_loading(tmp_path):
+    joblib = pytest.importorskip("joblib")
+    df = patients()
+    scope = run(dst.profile(df, charts=False, target="readmitted").pipeline(missing_flags=["age"]), df)
+    X = scope["X"]
+    model = scope["model"].fit(X, scope["y"])
+    path = tmp_path / "model.joblib"
+    joblib.dump(model, path)
+    again = joblib.load(path)
+    np.testing.assert_array_equal(again.predict_proba(X), model.predict_proba(X))
+    assert list(again[:-1].get_feature_names_out()) == list(model[:-1].get_feature_names_out())
