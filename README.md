@@ -84,6 +84,10 @@ It's a starting point to review, not a finished model: whether a flagged column 
 - `profile(..., after_outcome=["body"])` marks columns you know were recorded after the outcome. The statistics can miss them: on the Titanic, `body` (a body identification number) only exists for people who died, but so few bodies were recovered that its blanks look only moderately related to survival.
 - `report.pipeline(missing_flags=["age"])` keeps a 0/1 flag for blanks that carry signal. Flags are never added unless you ask, because a blank recorded after the outcome leaks the answer.
 
+### Dataset size
+
+Timed with 16 columns (numbers, categories and an ID), charts and a target: about 3 seconds for 10,000 rows, 6 seconds for 100,000, and 50 seconds for a million. For large data, `profile(df, sample=20_000)` profiles a fixed random 20,000 rows (about 5 seconds at a million rows); the row, duplicate and missing counts and any validation still use every row, and the report says what was sampled. The related-columns section is skipped above 30 columns.
+
 ## Clean in one call
 
 ```python
@@ -207,7 +211,7 @@ On the data they were fitted on, they give the same results as `fill_missing`, `
 
 | Function / method | What it does |
 |---|---|
-| `profile(df, title, charts, max_categories, missing_ok, rules, checks, related, target, task, after_outcome, group)` | Builds the report; `missing_ok` names columns where blank is meaningful (no fill/drop advice); `rules`/`checks` add a Validation section; `related=False` leaves out the Related columns section; `target` adds a Target section (see [Prepare for a model](#prepare-for-a-model)); `after_outcome` names columns you know were recorded after the outcome, treated as leaks; `group` names the column identifying a patient or customer with several rows, so `pipeline()` uses grouped folds |
+| `profile(df, title, charts, max_categories, missing_ok, rules, checks, related, target, task, after_outcome, group, sample)` | Builds the report; `missing_ok` names columns where blank is meaningful (no fill/drop advice); `rules`/`checks` add a Validation section; `related=False` leaves out the Related columns section; `target` adds a Target section (see [Prepare for a model](#prepare-for-a-model)); `after_outcome` names columns you know were recorded after the outcome, treated as leaks; `group` names the column identifying a patient or customer with several rows, so `pipeline()` uses grouped folds; `sample` profiles a fixed random subset of a large dataset (see [Dataset size](#dataset-size)) |
 | `report.save(path)` / `report.to_html()` | Self-contained HTML file or string |
 | `report.summary()` | One row per column: type, missing, unique values, outliers |
 | `report.suggestions` | The suggested steps as data (column, severity, message) |
