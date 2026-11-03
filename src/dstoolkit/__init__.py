@@ -11,12 +11,13 @@ Everything is available from the top level:
     dst.validate(df, {"age": {"min": 0, "max": 120}})
 
 or from its module: `dstoolkit.cleaning`, `dstoolkit.exploration`,
-`dstoolkit.profiling` and `dstoolkit.validation`. The scikit-learn
+`dstoolkit.profiling`, `dstoolkit.validation` and `dstoolkit.monitoring`
+(`compare()`: has new data drifted from the training data?). The scikit-learn
 transformers (MissingFiller, OutlierCapper, CategoryEncoder, Scaler, DateFeatures) are in
 `dstoolkit.transformers` and need the optional scikit-learn extra.
 """
 
-from . import cleaning, exploration, profiling, validation
+from . import cleaning, exploration, monitoring, profiling, validation
 from ._messages import get_message_output, set_message_output
 from .cleaning import (
     add_age_column,
@@ -50,10 +51,11 @@ from .exploration import (
     show_histogram,
     show_scatter,
 )
+from .monitoring import compare
 from .profiling import ColumnProfile, Profile, Suggestion, TargetProfile, profile
 from .validation import ColumnRule, Comparison, RuleResult, ValidationError, ValidationReport, validate
 
-__version__ = "0.13.1"
+__version__ = "0.14.0"
 
 # The transformers need scikit-learn (an optional extra), so they're imported on
 # first use: `dst.Scaler` works when scikit-learn is installed, and `import
@@ -67,6 +69,6 @@ def __getattr__(name: str) -> object:
         return getattr(transformers, name)
     raise AttributeError(f"module 'dstoolkit' has no attribute {name!r}")
 
-__all__ = ["cleaning", "exploration", "profiling", "validation", "__version__",
+__all__ = ["cleaning", "exploration", "monitoring", "profiling", "validation", "__version__",
            "set_message_output", "get_message_output",
-           *cleaning.__all__, *exploration.__all__, *profiling.__all__, *validation.__all__]
+           *cleaning.__all__, *exploration.__all__, *monitoring.__all__, *profiling.__all__, *validation.__all__]
