@@ -58,7 +58,7 @@ print(report.pipeline())   # a leak-free scikit-learn starter, ready to run
 - The target itself gets no fill, encoding or outlier advice; rows without a target are dropped.
 - **Repeated identifiers:** an ID column whose values repeat (several admissions per patient, several bookings per customer) gets a warning. With `profile(..., group="patient_id")`, `pipeline()` splits by that column (`StratifiedGroupKFold` or `GroupKFold`), so the same patient is never in both training and test folds. A random split lets the model recognise patients it has already seen, and scores look better than they will be on new patients.
 
-`report.pipeline()` turns the suggestions into a starter script. Steps that learn nothing from the data (type fixes, log transforms) run before the split. Steps that learn from it (fill values, outlier bounds, categories) go inside a scikit-learn `Pipeline` of dstoolkit transformers, so cross-validation refits them on each training fold. Leaks, identifiers and dates are left out of the features, with a comment saying why:
+`report.pipeline()` turns the suggestions into a starter script. Steps that learn nothing from the data (type fixes, log transforms) run before the split. Steps that learn from it (fill values, outlier bounds, categories) go inside a scikit-learn `Pipeline` of dstoolkit transformers, so cross-validation refits them on each training fold. Date columns become year, month and day-of-week features. Leaks and identifiers are left out of the features, with a comment saying why:
 
 ```python
 # 2. Features and target
@@ -175,6 +175,7 @@ cross_val_score(model, X, y, cv=folds)   # cleaning is refitted on each training
 | `OutlierCapper(columns, method, threshold)` | IQR or z-score bounds (`bounds_`) | Caps values at the bounds; rows are kept |
 | `CategoryEncoder(columns, handle_unknown, drop_original, min_frequency, other_label)` | The categories in each column (`categories_`), and with `min_frequency` the rare ones (`rare_`) | One-hot or label codes for those categories. Unseen categories are ignored (zeros, or a missing label) or raise an error. With `min_frequency` (rows, or a share such as 0.01), rare categories, and unseen ones, are grouped into "Other": useful for diagnosis codes, providers or ZIP codes with hundreds of mostly rare values |
 | `Scaler(columns)` | Min and range, or mean and standard deviation (`stats_`) | Min-max or z-score scaling with the training numbers |
+| `DateFeatures(columns, parts, intervals, drop_original)` | Nothing (which columns are dates: `date_columns_`) | Splits date columns into numbers a model can use (`<column>_year`, `_month`, `_dayofweek`, and `day`, `dayofyear`, `quarter` or `hour` if asked), and `intervals={"stay_days": ("admitted", "discharged")}` adds the days between two dates. Drops the date columns by default, since most models can't take dates |
 
 On the data they were fitted on, they give the same results as `fill_missing`, `handle_outliers(action="cap")`, `encode_categorical` and `normalize`. They take and return DataFrames (they need column names; inside a `ColumnTransformer`, call `.set_output(transform="pandas")`), support `get_feature_names_out()`, and can be cloned and pickled like any scikit-learn transformer.
 

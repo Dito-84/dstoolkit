@@ -269,7 +269,10 @@ class Profile:
         def cols(action: str) -> list[str]:
             return [s.column for s in by_action.get(action, []) if s.column is not None]
 
-        dropped, dates = cols("drop"), [n for n, k in kinds.items() if k == "datetime"]
+        dropped = cols("drop")
+        stored = {c.name for c in self.columns if c.kind == "datetime" and c.dtype.startswith("datetime")}
+        readable = [n for n, k in kinds.items() if k == "datetime" and (n in stored or n in cols("to_datetime"))]
+        dates = [n for n, k in kinds.items() if k == "datetime" and n not in readable]   # mixed day/month order
         identifiers = [n for n, k in kinds.items() if k == "text" and n not in cols("to_numeric")]
         converted = set(cols("to_numeric") + cols("to_boolean") + cols("standardize"))
         encoded = set(cols("encode"))
@@ -279,6 +282,7 @@ class Profile:
         excluded = {t.name, *dropped, *dates, *identifiers, *t.leaks, *unencoded, *([grouped] if grouped else [])}
         features = [n for n in kinds if n not in excluded]
         booleans = [n for n in features if kinds[n] == "boolean" or n in cols("to_boolean")]
+        date_features = [n for n in features if n in readable]
 
         if isinstance(missing_flags, str):
             raise TypeError("missing_flags must be a list of column names, not one string")
@@ -293,7 +297,7 @@ class Profile:
         features += [f"{c}_missing" for c in flags]
 
         before = self._code_lines(d, [s for s in self.suggestions if s.action in
-                                      ("remove_duplicates", "to_numeric", "to_boolean", "standardize")
+                                      ("remove_duplicates", "to_numeric", "to_boolean", "standardize", "to_datetime")
                                       and s.column not in excluded])
         if t.missing:
             before.append(f"{d} = {d}.dropna(subset=[{t.name!r}])   # rows without a target can't be used")
@@ -305,6 +309,8 @@ class Profile:
                           f"# True/False as 1/0; blanks stay missing")
 
         steps: list[str] = []
+        if date_features:
+            steps.append(f"dst.DateFeatures({date_features}),   # year, month, day of week; learns nothing")
         fills: dict[tuple[str, str], list[str]] = {}
         for s in by_action.get("fill_missing", []):
             if s.column in features and s.column not in booleans:
@@ -351,7 +357,7 @@ class Profile:
                     ("suggested for dropping", [c for c in dropped if c != t.name and c not in t.leaks]),
                     ("the group column: used to split, not to predict", [grouped] if grouped else []),
                     ("identifiers or free text", identifiers),
-                    ("dates: turn into features first if they matter", dates),
+                    ("dates with mixed day/month order: fix them at the source first", dates),
                     ("categories with no encoding suggested", unencoded)]
         lines = [*(["import pandas as pd"] if any("pd." in line for line in before) else []),
                  "import dstoolkit as dst",
@@ -383,6 +389,9 @@ class Profile:
                   "# 3. Steps that learn from the data: inside the pipeline, refitted on each training fold",
                   "# To use a model that can't handle blanks (e.g. LogisticRegression): fill every column,",
                   "# and add dst.Scaler(...) before a linear or distance-based model",
+                  *([f"# Durations between dates often matter more than the dates: add intervals={{'days': "
+                     f"({date_features[0]!r}, {date_features[1]!r})}} to dst.DateFeatures"]
+                    if len(date_features) >= 2 else []),
                   "model = make_pipeline(", *[f"    {step}" for step in steps], ")", "",
                   f"folds = {folds}",
                   f"scores = cross_val_score(model, X, y, cv=folds, scoring={scoring!r}{groups_arg})",

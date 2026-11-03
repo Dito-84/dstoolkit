@@ -235,3 +235,37 @@ def test_rare_grouping_learns_from_training_only_and_checks_input(codes):
     for bad in (0, 1.0, -0.5, True, "few"):
         with pytest.raises(ValueError, match="min_frequency"):
             dst.CategoryEncoder(["dx"], min_frequency=bad).fit(codes)
+
+
+# ---------- date features ----------
+
+@pytest.fixture
+def stays():
+    return pd.DataFrame({"admitted": pd.to_datetime(["2024-01-01", "2024-03-05", None]),
+                         "discharged": pd.to_datetime(["2024-01-04", "2024-03-06", "2024-05-01"]),
+                         "ward": ["A", "B", "A"]})
+
+
+def test_date_features_parts_and_intervals(stays):
+    f = dst.DateFeatures(intervals={"stay_days": ("admitted", "discharged")}).fit(stays)
+    out = f.transform(stays)
+    assert f.date_columns_ == ["admitted", "discharged"]
+    assert list(out.columns) == ["admitted_year", "admitted_month", "admitted_dayofweek", "discharged_year",
+                                 "discharged_month", "discharged_dayofweek", "ward", "stay_days"]
+    assert out["stay_days"].tolist()[:2] == [3.0, 1.0] and np.isnan(out["stay_days"].iloc[2])
+    assert out["admitted_dayofweek"].iloc[0] == 0.0          # 1 January 2024 was a Monday
+    assert np.isnan(out["admitted_year"].iloc[2])
+    assert list(f.get_feature_names_out()) == list(out.columns)
+    kept = dst.DateFeatures(["admitted"], parts=["quarter"], drop_original=False).fit(stays).transform(stays)
+    assert list(kept.columns) == ["admitted", "admitted_quarter", "discharged", "ward"]
+
+
+def test_date_features_check_their_input(stays):
+    with pytest.raises(TypeError, match="to_datetime_columns"):
+        dst.DateFeatures(["ward"]).fit(stays)
+    with pytest.raises(ValueError, match="parts"):
+        dst.DateFeatures(parts=["century"]).fit(stays)
+    with pytest.raises(KeyError):
+        dst.DateFeatures(intervals={"d": ("admitted", "nope")}).fit(stays)
+    with pytest.raises(ValueError, match="already exist"):
+        dst.DateFeatures(["admitted"]).fit(stays.assign(admitted_year=1))

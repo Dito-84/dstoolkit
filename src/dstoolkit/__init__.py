@@ -12,7 +12,7 @@ Everything is available from the top level:
 
 or from its module: `dstoolkit.cleaning`, `dstoolkit.exploration`,
 `dstoolkit.profiling` and `dstoolkit.validation`. The scikit-learn
-transformers (MissingFiller, OutlierCapper, CategoryEncoder, Scaler) are in
+transformers (MissingFiller, OutlierCapper, CategoryEncoder, Scaler, DateFeatures) are in
 `dstoolkit.transformers` and need the optional scikit-learn extra.
 """
 
@@ -58,7 +58,7 @@ __version__ = "0.11.1"
 # The transformers need scikit-learn (an optional extra), so they're imported on
 # first use: `dst.Scaler` works when scikit-learn is installed, and `import
 # dstoolkit` never needs it.
-_TRANSFORMERS = ("MissingFiller", "OutlierCapper", "CategoryEncoder", "Scaler")
+_TRANSFORMERS = ("MissingFiller", "OutlierCapper", "CategoryEncoder", "Scaler", "DateFeatures")
 
 
 def __getattr__(name: str) -> object:
