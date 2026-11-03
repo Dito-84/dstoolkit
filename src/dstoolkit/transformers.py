@@ -397,6 +397,14 @@ class Scaler(_FrameTransformer):
         return result
 
 
+def _completed_years(born: pd.Series, on: pd.Series) -> pd.Series:
+    """Whole years from born to on; missing when either is missing or born is later."""
+    years = on.dt.year - born.dt.year
+    before_birthday = (on.dt.month < born.dt.month) | ((on.dt.month == born.dt.month) & (on.dt.day < born.dt.day))
+    age = (years - before_birthday.astype(int)).astype("float")
+    return age.where(born.notna() & on.notna() & (born <= on))
+
+
 class DateFeatures(_FrameTransformer):
     """Turn date columns into numbers a model can use.
 
@@ -406,6 +414,10 @@ class DateFeatures(_FrameTransformer):
     intervals: {new column: (start column, end column)}: the days from start to
                end, e.g. {"stay_days": ("admitted", "discharged")}. Durations
                often matter more than the dates themselves.
+    ages: {new column: (birth date column, date column)}: age in completed
+          years on the second date, e.g. {"age_at_admission": ("date_of_birth",
+          "admitted")}. A birth date after the second date gives a missing age,
+          not a negative one.
     drop_original: remove the date columns afterwards (default True: most models
                    can't take dates)
 
@@ -418,11 +430,16 @@ class DateFeatures(_FrameTransformer):
 
     def __init__(self, columns: Sequence[str] | None = None,
                  parts: Sequence[DatePart] = ("year", "month", "dayofweek"),
-                 intervals: Mapping[str, tuple[str, str]] | None = None, drop_original: bool = True) -> None:
+                 intervals: Mapping[str, tuple[str, str]] | None = None, drop_original: bool = True,
+                 ages: Mapping[str, tuple[str, str]] | None = None) -> None:
         self.columns = columns
         self.parts = parts
         self.intervals = intervals
         self.drop_original = drop_original
+        self.ages = ages
+
+    def _pairs(self) -> dict[str, tuple[str, str]]:
+        return {**dict(self.intervals or {}), **dict(self.ages or {})}
 
     def fit(self, X: pd.DataFrame, y: Any = None) -> DateFeatures:
         bad = [p for p in self.parts if p not in DATE_PARTS]
@@ -433,7 +450,10 @@ class DateFeatures(_FrameTransformer):
             dates = [c for c in X.columns if pd.api.types.is_datetime64_any_dtype(X[c])]
         else:
             dates = _selected(X, self.columns, numeric_only=False)
-        used = dates + [c for pair in (self.intervals or {}).values() for c in pair]
+        same = set(self.intervals or {}) & set(self.ages or {})
+        if same:
+            raise ValueError(f"Names used for both an interval and an age: {sorted(same)}")
+        used = dates + [c for pair in self._pairs().values() for c in pair]
         missing = [c for c in used if c not in X.columns]
         if missing:
             raise KeyError(f"Columns not found: {missing}")
@@ -447,11 +467,11 @@ class DateFeatures(_FrameTransformer):
         return self
 
     def _new_names(self, dates: Sequence[Any]) -> list[str]:
-        return [f"{c}_{p}" for c in dates for p in self.parts] + list(self.intervals or {})
+        return [f"{c}_{p}" for c in dates for p in self.parts] + list(self._pairs())
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
         check_is_fitted(self)
-        pairs = dict(self.intervals or {})
+        pairs = self._pairs()
         result = self._start_transform(X, self.date_columns_ + [c for pair in pairs.values() for c in pair])
         for col in self.date_columns_:
             values = pd.to_datetime(X[col])
@@ -459,15 +479,17 @@ class DateFeatures(_FrameTransformer):
             for offset, part in enumerate(self.parts):
                 piece = getattr(values.dt, _DT_ATTR.get(part, part)).astype("float")
                 result.insert(at + offset, f"{col}_{part}", piece.to_numpy())
-        for name, (start, end) in pairs.items():
+        for name, (start, end) in (self.intervals or {}).items():
             result[name] = ((pd.to_datetime(X[end]) - pd.to_datetime(X[start])).dt.total_seconds() / 86400).to_numpy()
+        for name, (born, on) in (self.ages or {}).items():
+            result[name] = _completed_years(pd.to_datetime(X[born]), pd.to_datetime(X[on])).to_numpy()
         if self.drop_original:
             used = set(self.date_columns_) | {c for p in pairs.values() for c in p}
             result = result.drop(columns=[c for c in result.columns if c in used])
         return result
 
     def _output_names(self, names: list[Any]) -> list[Any]:
-        pairs = dict(self.intervals or {})
+        pairs = self._pairs()
         used = set(self.date_columns_) | {c for p in pairs.values() for c in p}
         out: list[Any] = []
         for name in names:

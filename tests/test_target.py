@@ -206,7 +206,8 @@ def test_pipeline_runs_on_messy_data():
     assert code.index("dst.remove_duplicates") < code.index("X = df[")
     assert "dst.standardize_labels(df, 'sex'" in code
     scope = run(code, df)
-    assert set(scope["X"].columns) == {"age", "visits", "sex", "date_of_birth"}
+    assert set(scope["X"].columns) == {"age", "visits", "sex"}            # no other date to measure an age on
+    assert "date of birth with no other date" in code
     assert len(scope["X"]) == 200
 
 
@@ -332,9 +333,89 @@ def test_pipeline_turns_dates_into_features():
                        "readmitted": np.where(stay + rng.normal(0, 2, n) > 9, "yes", "no")})
     code = dst.profile(df, charts=False, target="readmitted").pipeline()
     assert "dst.to_datetime_columns(df, ['admitted'])" in code.split("X = df[")[0]
-    assert "dst.DateFeatures(['admitted', 'discharged'])" in code
+    step = "dst.DateFeatures(['admitted', 'discharged'], parts=['month', 'dayofweek'])"
+    assert step in code                                                # no year: future data has new years
     assert "intervals={'days': ('admitted', 'discharged')}" in code
     run(code, df)
-    stay_step = "dst.DateFeatures(['admitted', 'discharged'], intervals={'stay': ('admitted', 'discharged')})"
-    with_stay = code.replace("dst.DateFeatures(['admitted', 'discharged'])", stay_step)
+    stay_step = step.replace("parts=", "intervals={'stay': ('admitted', 'discharged')}, parts=")
+    with_stay = code.replace(step, stay_step)
     assert run(with_stay, df)["scores"].mean() > run(code, df)["scores"].mean() + 0.1   # the duration is the signal
+
+
+def test_date_features_ages_in_completed_years():
+    df = pd.DataFrame({"born": pd.to_datetime(["1960-03-15", "1960-03-15", "2030-01-01", None]),
+                       "seen": pd.to_datetime(["2020-03-14", "2020-03-15", "2020-01-01", "2020-01-01"])})
+    out = dst.DateFeatures(["seen"], parts=["month"], ages={"age": ("born", "seen")}).fit_transform(df)
+    assert out["age"].tolist()[:2] == [59.0, 60.0]                     # the day before and on the birthday
+    assert out["age"].isna().tolist()[2:] == [True, True]              # born later, or no birth date
+    assert list(out.columns) == ["seen_month", "age"]                  # the birth date is used, then dropped
+    with pytest.raises(ValueError, match="both an interval and an age"):
+        dst.DateFeatures(intervals={"a": ("born", "seen")}, ages={"a": ("born", "seen")}).fit(df)
+
+
+def dated_admissions(n: int = 600, seed: int = 11) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    admitted = pd.Timestamp("2023-01-01") + pd.to_timedelta(np.sort(rng.integers(0, 700, n)), unit="D")
+    stay = rng.integers(1, 20, n)
+    age = rng.integers(20, 90, n)
+    return pd.DataFrame({
+        "patient_id": [f"P{i:04d}" for i in rng.integers(0, n // 2, n)],
+        "date_of_birth": (admitted - pd.to_timedelta(age * 365 + 100, unit="D")).strftime("%Y-%m-%d"),
+        "admitted": admitted.strftime("%Y-%m-%d"),
+        "discharged": (admitted + pd.to_timedelta(stay, unit="D")).strftime("%Y-%m-%d"),
+        "ward": rng.choice(["A", "B", "C"], n),
+        "stay_days": stay.astype(float) + rng.normal(0, 0.01, n),      # the target: length of stay
+        "readmitted": np.where(rng.random(n) < 0.2 + age / 400, "yes", "no"),
+    })
+
+
+def test_a_date_that_gives_the_answer_away_is_flagged():
+    df = dated_admissions().drop(columns="readmitted")
+    r = dst.profile(df, charts=False, related=False, target="stay_days")
+    assert "discharged" in r.target.leaks                              # discharged minus admitted is the stay
+    assert "admitted" not in r.target.leaks
+    note = next(s for s in r.suggestions if s.column == "discharged" and "leak" in s.message)
+    assert "days from admitted to discharged" in note.message and "the later date" in note.message
+    checks = r.target.features[r.target.features["note"] == "date check"]
+    assert "days from admitted to discharged" in set(checks["column_2"])
+    assert "admitted" not in r.target.untested
+    code = r.pipeline()
+    assert "discharged" in code.split("possible leaks")[1].split("\n")[0]
+    run(code, df)
+
+
+def test_dates_that_dont_leak_are_not_flagged():
+    r = dst.profile(dated_admissions().drop(columns="stay_days"), charts=False, related=False, target="readmitted")
+    assert r.target.leaks == []
+
+
+def test_pipeline_turns_a_date_of_birth_into_an_age():
+    df = dated_admissions().drop(columns="stay_days")
+    r = dst.profile(df, charts=False, related=False, target="readmitted")
+    code = r.pipeline()
+    assert "ages={'age_at_admitted': ('date_of_birth', 'admitted')}" in code
+    assert "dst.DateFeatures(['admitted', 'discharged']" in code       # the birth date isn't split into parts
+    scope = run(code, df)
+    out = scope["model"][:-1].fit_transform(scope["X"], scope["y"])
+    assert "age_at_admitted" in out.columns and "date_of_birth" not in out.columns
+    assert out["age_at_admitted"].between(19, 90).all()
+
+
+def test_pipeline_can_split_by_time():
+    df = dated_admissions().drop(columns="stay_days")
+    r = dst.profile(df, charts=False, related=False, target="readmitted", group="patient_id")
+    code = r.pipeline(time_column="admitted")
+    assert "TimeSeriesSplit(5)" in code and "groups=groups" not in code
+    assert code.index("df = df.sort_values('admitted'") < code.index("X = df[")
+    assert "a returning patient_id can be in training and test data" in code
+    scope = run(code, df)
+    assert scope["X"].index.equals(scope["df"].sort_values("admitted", kind="stable").index)
+    assert len(scope["scores"]) == 5
+    with pytest.raises(ValueError, match="time_column must be a date column"):
+        r.pipeline(time_column="ward")
+
+
+def test_mixed_day_month_dates_report_how_many_are_ambiguous():
+    df = pd.DataFrame({"seen": ["13/02/2024", "02/13/2024", "03/04/2024", "05/06/2024", "25/12/2024"] * 4})
+    s = next(s for s in dst.profile(df, charts=False).suggestions if s.column == "seen")
+    assert "8 can only be day-first, 4 only month-first, and 8 could be either" in s.message
