@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.14.0
+
+- **New: `dst.compare(reference, current)`** checks whether new data still looks like the data a model was built on, one row per column, biggest changes first:
+  - **type changes**, such as numbers arriving as text
+  - **distribution shift**, as the population stability index (PSI) over the reference's deciles for numbers and over the categories for the rest. Categories under 1% of the reference share one bin, so a long tail of rare codes doesn't look like drift. Moderate from 0.1, major from 0.25.
+  - **more or fewer blanks**: moderate from 2 percentage points, major from 10
+  - **new values**, such as a new code or a relabelled category: moderate from 2% of new rows, major from 5%. Rarer new values are listed without raising the status.
+  - **added and removed columns**
+
+  A Kolmogorov-Smirnov or chi-square p-value, adjusted for testing many columns, is reported but doesn't set the status, because with thousands of rows tiny harmless shifts are "significant". Dates aren't compared, since they're expected to move forward. Identifiers (many values, mostly distinct) only get the type and blank checks. Nothing is changed in either DataFrame.
+- **`Hospital_Readmissions`, section 8:** the 2024 admissions against the 2023 ones (all stable), then a batch with a lab unit change, "ER" instead of "Emergency", a new diagnosis code and missing prior-admission counts. All four are flagged as major.
+
 ## 0.13.1
 
 - **`pipeline()`'s model no longer overfits.** The generated script now uses gradient boosting with small, slowly learning trees (`learning_rate=0.03, max_iter=200, max_depth=3, min_samples_leaf=40`) instead of scikit-learn's defaults. With the defaults, the hospital demo's risks were overconfident: the riskiest tenth of admissions were predicted 63% and 48% were readmitted, and the safest tenth 1% against 5%. With the new settings each band is within about 2 points, the Brier score falls from 0.145 to 0.135, and ROC AUC rises from 0.71 to 0.75. On the Titanic, ROC AUC is 0.859 (was 0.856).
