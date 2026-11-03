@@ -58,7 +58,7 @@ print(report.pipeline())   # a leak-free scikit-learn starter, ready to run
 - The target itself gets no fill, encoding or outlier advice; rows without a target are dropped.
 - **Repeated identifiers:** an ID column whose values repeat (several admissions per patient, several bookings per customer) gets a warning. With `profile(..., group="patient_id")`, `pipeline()` splits by that column (`StratifiedGroupKFold` or `GroupKFold`), so the same patient is never in both training and test folds. A random split lets the model recognise patients it has already seen, and scores look better than they will be on new patients.
 
-`report.pipeline()` turns the suggestions into a starter script. Steps that learn nothing from the data (type fixes, log transforms) run before the split. Steps that learn from it (fill values, outlier bounds, categories) go inside a scikit-learn `Pipeline` of dstoolkit transformers, so cross-validation refits them on each training fold. Date columns become year, month and day-of-week features. Leaks and identifiers are left out of the features, with a comment saying why:
+`report.pipeline()` turns the suggestions into a starter script. Steps that learn nothing from the data (type fixes, log transforms) run before the split. Steps that learn from it (fill values, outlier bounds, categories) go inside a scikit-learn `Pipeline` of dstoolkit transformers, so cross-validation refits them on each training fold. Date columns become month and day-of-week features (not year: new data comes from years the model never saw), and a date of birth becomes an age on another date in the data. Leaks and identifiers are left out of the features, with a comment saying why:
 
 ```python
 # 2. Features and target
@@ -83,6 +83,9 @@ It's a starting point to review, not a finished model: whether a flagged column 
 
 - `profile(..., after_outcome=["body"])` marks columns you know were recorded after the outcome. The statistics can miss them: on the Titanic, `body` (a body identification number) only exists for people who died, but so few bodies were recovered that its blanks look only moderately related to survival.
 - `report.pipeline(missing_flags=["age"])` keeps a 0/1 flag for blanks that carry signal. Flags are never added unless you ask, because a blank recorded after the outcome leaks the answer.
+- `report.pipeline(time_column="admitted")` splits by time: rows are sorted by that date, and each fold trains on earlier rows and tests on later ones. Random and grouped folds mix past and future; a time split is the honest estimate for a model that will predict next month's cases.
+
+Dates are checked for leaks too: each date, and the days between each pair of dates, are tested against the target. Predicting length of stay, `discharged` minus `admitted` *is* the answer, so the report flags `discharged` (the later date) as a possible leak. Dates written both day-first and month-first are never guessed at: the report counts how many can only be read one way and how many could be either, so they can be fixed at the source.
 
 ### Dataset size
 
@@ -179,7 +182,7 @@ cross_val_score(model, X, y, cv=folds)   # cleaning is refitted on each training
 | `OutlierCapper(columns, method, threshold)` | IQR or z-score bounds (`bounds_`) | Caps values at the bounds; rows are kept |
 | `CategoryEncoder(columns, handle_unknown, drop_original, min_frequency, other_label)` | The categories in each column (`categories_`), and with `min_frequency` the rare ones (`rare_`) | One-hot or label codes for those categories. Unseen categories are ignored (zeros, or a missing label) or raise an error. With `min_frequency` (rows, or a share such as 0.01), rare categories, and unseen ones, are grouped into "Other": useful for diagnosis codes, providers or ZIP codes with hundreds of mostly rare values |
 | `Scaler(columns)` | Min and range, or mean and standard deviation (`stats_`) | Min-max or z-score scaling with the training numbers |
-| `DateFeatures(columns, parts, intervals, drop_original)` | Nothing (which columns are dates: `date_columns_`) | Splits date columns into numbers a model can use (`<column>_year`, `_month`, `_dayofweek`, and `day`, `dayofyear`, `quarter` or `hour` if asked), and `intervals={"stay_days": ("admitted", "discharged")}` adds the days between two dates. Drops the date columns by default, since most models can't take dates |
+| `DateFeatures(columns, parts, intervals, drop_original, ages)` | Nothing (which columns are dates: `date_columns_`) | Splits date columns into numbers a model can use (`<column>_year`, `_month`, `_dayofweek`, and `day`, `dayofyear`, `quarter` or `hour` if asked). `intervals={"stay_days": ("admitted", "discharged")}` adds the days between two dates, and `ages={"age_at_admission": ("date_of_birth", "admitted")}` the age in completed years (missing, not negative, if the birth date is later). Drops the date columns by default, since most models can't take dates |
 
 On the data they were fitted on, they give the same results as `fill_missing`, `handle_outliers(action="cap")`, `encode_categorical` and `normalize`. They take and return DataFrames (they need column names; inside a `ColumnTransformer`, call `.set_output(transform="pandas")`), support `get_feature_names_out()`, and can be cloned and pickled like any scikit-learn transformer.
 
@@ -216,7 +219,7 @@ On the data they were fitted on, they give the same results as `fill_missing`, `
 | `report.summary()` | One row per column: type, missing, unique values, outliers |
 | `report.suggestions` | The suggested steps as data (column, severity, message) |
 | `report.code(df_name)` | The suggested steps as runnable code, one call per kind of step. These functions learn from every row: use them for exploring, and `pipeline()` for models |
-| `report.pipeline(df_name, missing_flags)` | A leak-free modelling starter (needs `target`); `missing_flags` keeps 0/1 flags for the blanks you've judged were known before the outcome: stateless steps before the split, learned steps in a scikit-learn `Pipeline`, cross-validated against a no-skill baseline |
+| `report.pipeline(df_name, missing_flags, time_column)` | A leak-free modelling starter (needs `target`); `missing_flags` keeps 0/1 flags for the blanks you've judged were known before the outcome; `time_column` splits by time (`TimeSeriesSplit`): stateless steps before the split, learned steps in a scikit-learn `Pipeline`, cross-validated against a no-skill baseline |
 | `report.validation` | The `ValidationReport` when `rules` or `checks` were given, otherwise `None` |
 | `report.target` | A `TargetProfile` when `target` was given: `task`, `classes`, `features` (each feature vs the target), `missingness`, `leaks`, `untested` |
 | `report.associations` | The related pairs, as returned by `associations()`. `None` when `related=False`, or above 30 columns, where the number of pairs makes it slow (`report.associations_skipped` says why); call `associations()` on the columns you need instead |

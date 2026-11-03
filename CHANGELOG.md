@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.13.0
+
+Dates, done safely: the remaining date limits of 0.12.0.
+
+- **Dates are checked for leaks.** With `profile(target=...)`, each readable date column (as a date) and the days between each pair of dates are tested against the target, and shown in the Target section as date checks. A strength of 0.9 or more flags the date, or for an interval the later of the two dates, as a possible leak, and `pipeline()` leaves it out. Predicting length of stay, `discharged` minus `admitted` is the answer itself; until now the report couldn't see that, because dates weren't tested.
+- **Dates of birth become ages.** `DateFeatures(ages={"age_at_admission": ("date_of_birth", "admitted")})` gives the age in completed years on another date; a birth date after that date gives a missing age, not a negative one. `pipeline()` uses it for a column named like a date of birth, measured on `time_column` or the first other date, instead of splitting the birth date into a birth month and weekday. With no other date, the birth date is left out with a comment showing how to add an age before the split.
+- **New: `pipeline(time_column="admitted")`** sorts the rows by that date and uses `TimeSeriesSplit`, so each fold trains on earlier rows and tests on later ones: the honest estimate for a model that will predict future cases. With a group column, a returning patient can then appear in both, as happens in practice, and the script says so.
+- **No year feature by default in `pipeline()`.** The generated `DateFeatures` step uses month and day of week only: a model that learns from the year is judged on years it has seen, and new data will come from years it hasn't. (`DateFeatures` itself still defaults to year, month and day of week.)
+- **Mixed day/month dates: clearer, still not guessed.** The suggestion now counts how many values can only be day-first, how many only month-first, and how many could be either, and suggests resolving them at the source (for example, by which site or system wrote each row). No rule can read the ambiguous ones safely, so dstoolkit still doesn't try.
+- The `Hospital_Readmissions` notebook compares grouped folds with a time split.
+
 ## 0.12.0
 
 Preparing real-world data for a model: repeated patients, dates, rare codes, informative blanks and leaks you have to declare. Every feature appears in a new demo on made-up hospital data.

@@ -41,6 +41,7 @@ from matplotlib.figure import Figure
 from .cleaning import (
     DATE_PATTERN,
     DOB_NAME_HINTS,
+    NUMERIC_DATE,
     _bounds,
     _date_order,
     _is_yes_no,
@@ -239,7 +240,8 @@ class Profile:
         return [line for line in lines if any(c in line for c in conversions)] + \
                [line for line in lines if not any(c in line for c in conversions)]
 
-    def pipeline(self, df_name: str = "df", missing_flags: Sequence[str] = ()) -> str:
+    def pipeline(self, df_name: str = "df", missing_flags: Sequence[str] = (),
+                 time_column: str | None = None) -> str:
         """A leak-free modelling starter as runnable Python: needs profile(target=...).
 
         Steps that learn nothing from the data (type fixes, log transforms,
@@ -257,6 +259,16 @@ class Profile:
                        were known before the outcome; other candidates appear as
                        a comment. Flags learn nothing from the data, so they're
                        made before the split, and work for dropped columns too.
+        time_column: a date column to split by time: rows are sorted by it, and
+                     each fold trains on earlier rows and tests on later ones
+                     (TimeSeriesSplit). The honest estimate for a model that will
+                     predict the future; random and grouped folds mix past and
+                     future. With a group column, a returning patient can then be
+                     in both training and test data, as happens in practice.
+
+        Dates become month and day of week (not year: new data will come from
+        years the model never saw). A date of birth becomes an age on another
+        date in the data (time_column, or the first other date).
         """
         t = self.target
         if t is None:
@@ -285,6 +297,19 @@ class Profile:
         features = [n for n in kinds if n not in excluded]
         booleans = [n for n in features if kinds[n] == "boolean" or n in cols("to_boolean")]
         date_features = [n for n in features if n in readable]
+        if time_column is not None and time_column not in readable:
+            raise ValueError(f"time_column must be a date column that can be read safely; {time_column!r} isn't one")
+        if time_column is not None and time_column not in features:
+            raise ValueError(f"time_column {time_column!r} is left out of the features (a leak, or dropped)")
+        births = [n for n in date_features if any(h in n.lower().replace(" ", "_") for h in DOB_NAME_HINTS)]
+        others = [n for n in date_features if n not in births]
+        on = time_column if time_column is not None else (others[0] if others else None)
+        ages = {f"age_at_{on}": (b, on) for b in births} if on is not None and len(births) == 1 else \
+            {f"{b}_age_at_{on}": (b, on) for b in births} if on is not None else {}
+        part_columns = others                    # a birth month or weekday means nothing to a model
+        ageless = births if not ages else []      # no other date to measure an age on
+        features = [f for f in features if f not in ageless]
+        date_features = [f for f in date_features if f not in ageless]
 
         if isinstance(missing_flags, str):
             raise TypeError("missing_flags must be a list of column names, not one string")
@@ -312,7 +337,9 @@ class Profile:
 
         steps: list[str] = []
         if date_features:
-            steps.append(f"dst.DateFeatures({date_features}),   # year, month, day of week; learns nothing")
+            extra = f", ages={ages!r}" if ages else ""
+            steps.append(f"dst.DateFeatures({part_columns}, parts=['month', 'dayofweek']{extra}),   "
+                         f"# learns nothing; no year: new data comes from years the model never saw")
         fills: dict[tuple[str, str], list[str]] = {}
         for s in by_action.get("fill_missing", []):
             if s.column in features and s.column not in booleans:
@@ -339,7 +366,12 @@ class Profile:
         guess = "the most common class" if classify else "the average"
         steps.append(f"{model}(random_state=0),   # accepts blanks and needs no scaling")
 
-        if grouped and classify:
+        if time_column is not None:
+            splitter = "TimeSeriesSplit"
+            folds = f"{splitter}(5)   # each fold trains on earlier rows and tests on later ones"
+            before.append(f"{d} = {d}.sort_values({time_column!r}, kind='stable')   "
+                          f"# oldest first, for the time split")
+        elif grouped and classify:
             splitter = "StratifiedGroupKFold"
             folds = (f"{splitter}(5, shuffle=True, random_state=0)   "
                      f"# each {grouped} in one fold only; class shares kept as far as possible")
@@ -353,13 +385,15 @@ class Profile:
             splitter, folds = "KFold", "KFold(5, shuffle=True, random_state=0)"
         scoring = ("neg_root_mean_squared_error" if not classify else
                    "roc_auc" if t.classes is not None and len(t.classes) == 2 else "balanced_accuracy")
-        groups_arg = ", groups=groups" if grouped else ""
+        groups_arg = ", groups=groups" if grouped and time_column is None else ""
         left_out = [("recorded after the outcome (after_outcome)", t.after_outcome),
                     ("possible leaks: check they were known before the outcome", t.leaks),
                     ("suggested for dropping", [c for c in dropped if c != t.name and c not in t.leaks]),
                     ("the group column: used to split, not to predict", [grouped] if grouped else []),
                     ("identifiers or free text", identifiers),
                     ("dates with mixed day/month order: fix them at the source first", dates),
+                    ("a date of birth with no other date to measure age on: add an age column before the "
+                     "split, e.g. dst.add_age_column(df, as_of='2026-01-01')", ageless),
                     ("categories with no encoding suggested", unencoded)]
         lines = [*(["import pandas as pd"] if any("pd." in line for line in before) else []),
                  "import dstoolkit as dst",
@@ -386,14 +420,17 @@ class Profile:
             if fresh:
                 lines.append(f"# Left out ({why}): {', '.join(fresh)}")
         lines += [f"X = {d}[{features!r}]", f"y = {d}[{t.name!r}]",
-                  *([f"groups = {d}[{grouped!r}]   # rows of the same {grouped} stay together"] if grouped else []),
+                  *([f"groups = {d}[{grouped!r}]   # rows of the same {grouped} stay together"]
+                    if grouped and time_column is None else []),
+                  *([f"# Split by {time_column}: a returning {grouped} can be in training and test data, "
+                     f"as happens in practice"] if grouped and time_column is not None else []),
                   "",
                   "# 3. Steps that learn from the data: inside the pipeline, refitted on each training fold",
                   "# To use a model that can't handle blanks (e.g. LogisticRegression): fill every column,",
                   "# and add dst.Scaler(...) before a linear or distance-based model",
                   *([f"# Durations between dates often matter more than the dates: add intervals={{'days': "
-                     f"({date_features[0]!r}, {date_features[1]!r})}} to dst.DateFeatures"]
-                    if len(date_features) >= 2 else []),
+                     f"({others[0]!r}, {others[1]!r})}} to dst.DateFeatures"]
+                    if len(others) >= 2 else []),
                   "model = make_pipeline(", *[f"    {step}" for step in steps], ")", "",
                   f"folds = {folds}",
                   f"scores = cross_val_score(model, X, y, cv=folds, scoring={scoring!r}{groups_arg})",
@@ -740,6 +777,58 @@ def _task(series: pd.Series, task: str) -> Task:
     return "classification" if whole and values.nunique() <= CLASSIFICATION_MAX_VALUES else "regression"
 
 
+def _date_order_counts(text: pd.Series) -> tuple[int, int, int]:
+    """(only day-first, only month-first, could be either) among numeric dates like 03/04/2024."""
+    parts = text.dropna().str.extract(NUMERIC_DATE).dropna()
+    first, second = parts[0].astype(int), parts[1].astype(int)
+    return int((first > 12).sum()), int((second > 12).sum()), int(((first <= 12) & (second <= 12)).sum())
+
+
+def _readable_dates(df: pd.DataFrame, skip: Hashable) -> dict[str, pd.Series]:
+    """Every column that holds dates which can be read safely, as datetimes (mixed day/month order left out)."""
+    found: dict[str, pd.Series] = {}
+    for col in df.columns:
+        if col == skip:
+            continue
+        series = df[col]
+        if pd.api.types.is_datetime64_any_dtype(series):
+            found[str(col)] = series
+        elif _kind(series) == "datetime":
+            text = _normalized(series)
+            order, _ = _date_order(text)
+            if order != "conflict":
+                found[str(col)] = _parse_dates(text, dayfirst=order == "day_first")
+    return found
+
+
+def _date_checks(df: pd.DataFrame, target: Hashable, target_values: pd.Series) -> pd.DataFrame:
+    """Dates as numbers, and the days between each pair of dates, tested against the target."""
+    dates = _readable_dates(df, target)
+    if not dates:
+        return pd.DataFrame()
+    numbers: dict[str, pd.Series] = {}
+    epoch = pd.Timestamp("1970-01-01")
+    for name, values in dates.items():
+        numbers[f"{name} (as a date)"] = (values.dt.tz_localize(None) if values.dt.tz else values).sub(epoch).dt.days
+    names = list(dates)
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            later, earlier = (b, a) if dates[b].median() >= dates[a].median() else (a, b)
+            numbers[f"days from {earlier} to {later}"] = (dates[later] - dates[earlier]).dt.days
+    frame = pd.DataFrame({k: v.astype("float") for k, v in numbers.items()}, index=df.index)
+    frame = frame.loc[:, frame.nunique() > 1]
+    if frame.empty:
+        return frame
+    frame["__target__"] = target_values
+    found = _associations(frame, target="__target__", significant_only=False, verbose=False)
+    return found.assign(column_1=str(target), column_2=found["column_2"].map(str))
+
+
+def _date_leak_column(check: str) -> str:
+    """The real column behind a date check: the date itself, or the later date of an interval."""
+    return check.rsplit(" to ", 1)[1] if check.startswith("days from ") else check.removesuffix(" (as a date)")
+
+
 def _profile_target(df: pd.DataFrame, target: Hashable, task: str,
                     declared: list[str]) -> tuple[TargetProfile, list[Suggestion]]:
     name = str(target)
@@ -771,6 +860,14 @@ def _profile_target(df: pd.DataFrame, target: Hashable, task: str,
         tested = {str(c) for c in features["column_2"]}
         untested = [str(c) for c in df.columns if c != target and str(c) not in tested]
         features = features.assign(column_1=features["column_1"].map(str), column_2=features["column_2"].map(str))
+        checks = _date_checks(df, target, data[target])
+        if not checks.empty:
+            tested_dates = {_date_leak_column(c) for c in checks["column_2"]}
+            untested = [c for c in untested if c not in tested_dates]
+            features = pd.concat([features, checks.assign(note=checks["note"].where(
+                checks["note"] != "", "date check"))], ignore_index=True)
+            features = features.iloc[features["strength"].abs().sort_values(ascending=False, kind="stable").index]
+            features = features.reset_index(drop=True)
 
     gaps = [c for c in df.columns if c != target and 0 < df[c].isna().sum() < len(df)]
     missingness = empty
@@ -787,13 +884,24 @@ def _profile_target(df: pd.DataFrame, target: Hashable, task: str,
                               f"known when predicting {name}. Leave it out of the model."))
     strong = features[(features["p_adjusted"] < 0.05) & (features["strength"].abs() >= LEAK_STRENGTH)]
     for r in strong.to_dict("records"):
-        if str(r["column_2"]) in declared:
+        check = str(r["column_2"])
+        column = _date_leak_column(check) if check.endswith(" (as a date)") or \
+            check.startswith("days from ") else check
+        if column in declared or column in leaks:
             continue
-        leaks.append(str(r["column_2"]))
-        out.append(Suggestion(str(r["column_2"]), "drop", "high",
-                              f"Possible leak: almost perfectly related to {name} ({r['measure']} = "
-                              f"{abs(r['strength']):.2f}). Check it was known before the outcome; if not, "
-                              f"leave it out of the model."))
+        leaks.append(column)
+        if check.startswith("days from "):
+            message = (f"Possible leak: the number of {check} is almost perfectly related to {name} ({r['measure']} = "
+                       f"{abs(r['strength']):.2f}). {column}, the later date, was probably recorded with or after "
+                       f"the outcome; if so, leave it out of the model.")
+        elif check != column:
+            message = (f"Possible leak: the dates in {column} are almost perfectly related to {name} "
+                       f"({r['measure']} = {abs(r['strength']):.2f}). Check they were known before the outcome.")
+        else:
+            message = (f"Possible leak: almost perfectly related to {name} ({r['measure']} = "
+                       f"{abs(r['strength']):.2f}). Check it was known before the outcome; if not, "
+                       f"leave it out of the model.")
+        out.append(Suggestion(column, "drop", "high", message))
     for r in missingness.to_dict("records"):
         column = str(r["column_2"])
         if column in declared:
@@ -953,10 +1061,13 @@ def _profile_column(series: pd.Series, name: str, charts: bool, max_categories: 
                 dates = _parse_dates(text, dayfirst=order == "day_first")
                 if order == "conflict":
                     dates = dates.where(dates.isna())  # can't be read reliably, so no earliest/latest
+                    only_day, only_month, either = _date_order_counts(text)
                     suggest("type", "high", f"Dates mix day-first and month-first order (e.g. {examples[0]!r} "
-                            f"and {examples[1]!r}), so some would be read the wrong way round. Fix them at "
-                            f"the source, or convert with to_datetime_columns(dayfirst=...) if one order is "
-                            f"right for all of them.")
+                            f"and {examples[1]!r}): {only_day:,} can only be day-first, {only_month:,} only "
+                            f"month-first, and {either:,} could be either (both parts 12 or less), so no rule can "
+                            f"read them all safely. Fix them at the source (for example, by which site or "
+                            f"system wrote each row), or convert with to_datetime_columns(dayfirst=...) if one "
+                            f"order is right for all of them.")
                 else:
                     suggest("type", "medium", "Dates stored as text; convert to dates so they sort, filter "
                             "and subtract correctly.", "to_datetime")
