@@ -35,7 +35,7 @@ report.save("report.html")   # one self-contained file to share
 print(report.code())         # the suggested cleaning steps as runnable code
 ```
 
-The report covers the whole dataset (rows, duplicates, missing cells), every column (type, missing values, statistics, outliers and a chart), the correlations between numeric columns, and **related columns of any type** (numbers, categories, or one of each, from [`associations()`](#exploration-dstoolkitexploration), with p-values corrected for testing many pairs). It also reads the data and **suggests cleaning steps, with ready-to-run `dstoolkit` code**: which columns are too sparse to keep, which to fill and how, long tails that suit a log scale, numbers stored as text, categories to encode, labels written more than one way ("Male", "male "), and identifier columns to leave out of models.
+The report covers the whole dataset (rows, duplicates, missing cells), every column (type, missing values, statistics, outliers and a chart), the correlations between numeric columns, and **related columns of any type** (numbers, categories, or one of each, from [`associations()`](#exploration-dstoolkitexploration), with p-values corrected for testing many pairs). It also reads the data and **suggests cleaning steps, with ready-to-run `dstoolkit` code**: which columns are too sparse to keep, which to fill and how, long tails that suit a log scale, numbers stored as text, categories to encode, labels written more than one way ("Male", "male "), identifier columns to leave out of models, column names with hidden spaces or line breaks, and notes rows at the end of an export ("Source: ..." lines that aren't data). Those notes rows are left out of the column analysis, since they would make number columns look like text, and the code drops them first.
 
 [![Profile report](docs/profile.png)](docs/titanic_profile.html)
 
@@ -218,6 +218,7 @@ On the data they were fitted on, they give the same results as `fill_missing`, `
 
 | Function | What it does |
 |---|---|
+| `clean_column_names(df, case)` | Tidies column names from exports: removes hidden spaces and line breaks, then `"snake"` (default: `"Patient Age \n(years) "` → `patient_age_years`), `"pascal"` or `"strip"` (spaces only). Names that would clash get `_2`, `_3`, a name that's already clean keeps it, and every rename is reported |
 | `to_boolean(df, columns)` | Yes/No text (any case, also Y/N, True/False) to True/False; blanks and "N/A" become missing. Columns with any other value are left alone |
 | `to_datetime_columns(df, columns, min_share, dayfirst, format)` | Date text (2020-01-31, 01/31/2020, ...) to real dates. Day/month order is worked out per column from the data (13/02/2020 can only be day-first), never value by value; a column mixing both orders is left alone. Number columns are never turned into dates |
 | `to_category(df, columns, max_unique)` | Repeated text labels (hospital, region) to pandas' category type |

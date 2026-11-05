@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.15.0
+
+Two problems from real hospital exports, found by reviewing the earlier 2023 drafts.
+
+- **New: `clean_column_names(df, case="snake")`.** It removes hidden spaces and line breaks from column names, then gives every name one style: `"snake"` (`patient_age_years`), `"pascal"` (`PatientAgeYears`) or `"strip"` (spaces only, wording kept). Export headers such as `"Number of THAs Performed \n(0, 1, or 2) "` break `df["..."]` lookups when typed without their hidden characters. Names that would clash get `_2`, `_3` and are never duplicated silently; a column whose name is already clean keeps it; names that would become empty get `column_<position>`; every rename is reported.
+- **`profile()` flags messy column names** (spaces at either end, line breaks, double spaces) and suggests `clean_column_names()`. `code()` runs it last, so the steps before it can still use the original names.
+- **`profile()` finds notes rows at the end of an export:** trailing rows with at most a fifth of the columns filled, when the rest of the file has almost none like that (at most 50 rows, and 10% of the file; files of 20 rows or more).
+  - The column analysis leaves them out, because a "Source: ..." line in an age column makes the column text and adds fake blanks.
+  - The first suggestion drops them by row label, and both `code()` and `pipeline()` do that before anything else.
+  - Row and missing-cell counts in the overview still describe the file as loaded.
+
 ## 0.14.0
 
 - **New: `dst.compare(reference, current)`** checks whether new data still looks like the data a model was built on, one row per column, biggest changes first:
