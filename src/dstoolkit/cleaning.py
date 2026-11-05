@@ -14,6 +14,10 @@ modified. Steps can be used on their own or chained with `clean()`:
     # or all at once
     df = dst.clean(df, missing={"numeric": "median"}, outliers={"columns": ["fare"], "action": "cap"})
 
+Column names from exports often carry hidden spaces or line breaks; tidy them first:
+
+    df = dst.clean_column_names(df)             # " Patient Age\n(years) " -> "patient_age_years"
+
 Columns read in as text can be given proper types first:
 
     df = dst.convert_types(df)                  # yes/no -> True/False, date text -> dates
@@ -42,9 +46,11 @@ OutlierAction = Literal["remove", "cap"]
 UnmatchedLabels = Literal["keep", "missing", "raise"]
 Encoding = Literal["onehot", "label"]
 Scaling = Literal["minmax", "zscore"]
+NameCase = Literal["snake", "pascal", "strip"]
 StepOptions = bool | Mapping[str, Any] | None
 
 __all__ = [
+    "clean_column_names",
     "to_boolean",
     "to_datetime_columns",
     "to_category",
@@ -452,6 +458,67 @@ def _counts(values: pd.Series, limit: int = 5) -> str:
 
 
 # ---------- duplicates ----------
+
+def _clean_name(name: str, case: NameCase) -> str:
+    words = " ".join(name.split())                     # line breaks, tabs, repeated and edge spaces
+    if case == "strip":
+        return words
+    parts = re.findall(r"[0-9A-Za-z]+", words)
+    if case == "snake":
+        return "_".join(p.lower() for p in parts)
+    return "".join(p[:1].upper() + p[1:].lower() for p in parts)
+
+
+def clean_column_names(df: pd.DataFrame, case: NameCase = "snake", verbose: bool = True) -> pd.DataFrame:
+    """Tidy column names: no hidden spaces or line breaks, one consistent style.
+
+    case: "snake" (default) gives "patient_had_a_complication_yes_no";
+          "pascal" gives "PatientHadAComplicationYesNo";
+          "strip" only removes spaces and line breaks at the edges and collapses
+          the ones inside, keeping the wording and punctuation.
+
+    Names that would become empty are named column_1, column_2, ... by position,
+    and names that would clash get _2, _3 (never a silent duplicate); a column
+    whose name is already clean keeps it. Names that aren't text (e.g. numbers)
+    are left alone. Every rename is reported.
+    """
+    if case not in ("snake", "pascal", "strip"):
+        raise ValueError(f'case must be "snake", "pascal" or "strip", got {case!r}')
+    new: list[Any] = []
+    for i, name in enumerate(df.columns, start=1):
+        if not isinstance(name, str):
+            new.append(name)
+            continue
+        new.append(_clean_name(name, case) or f"column_{i}")
+    # names that are already clean keep them; a clash renames the other column
+    unchanged = [old == nw for old, nw in zip(df.columns, new, strict=True)]
+    taken: set[Any] = set()
+    final: list[Any] = list(new)
+    for i, name in enumerate(new):
+        if unchanged[i] and name not in taken:
+            taken.add(name)
+        else:
+            unchanged[i] = False
+    for i, name in enumerate(new):
+        if unchanged[i]:
+            continue
+        candidate, n = name, 1
+        while candidate in taken:
+            n += 1
+            candidate = f"{name}_{n}"
+        taken.add(candidate)
+        final[i] = candidate
+    result = df.copy()
+    result.columns = pd.Index(final)
+    renamed = [(old, nw) for old, nw in zip(df.columns, final, strict=True) if old != nw]
+    if renamed:
+        shown = "; ".join(f"{old!r} -> {nw!r}" for old, nw in renamed[:5])
+        more = f" (and {len(renamed) - 5} more)" if len(renamed) > 5 else ""
+        _say(verbose, f"Renamed {len(renamed)} column(s): {shown}{more}.")
+    else:
+        _say(verbose, "Column names already clean.")
+    return result
+
 
 def remove_duplicates(df: pd.DataFrame, subset: Sequence[str] | None = None,
                       keep: Literal["first", "last"] = "first", verbose: bool = True) -> pd.DataFrame:

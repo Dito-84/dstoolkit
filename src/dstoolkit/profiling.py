@@ -69,6 +69,7 @@ HIGH_CORRELATION = 0.9
 RELATED_MAX_COLUMNS = 30     # above this, the related-columns section is skipped (pairs grow with the square)
 RELATED_ROWS_SHOWN = 20      # pairs listed in the HTML; report.associations has them all
 GENTLE_BOOSTING = "learning_rate=0.03, max_iter=200, max_depth=3, min_samples_leaf=40, random_state=0"
+FOOTER_MAX_ROWS = 50        # notes rows at the end of an export: at most this many (and 10% of rows)
 LEAK_STRENGTH = 0.9          # a feature this strongly related to the target may give the answer away
 MISSING_SIGNAL = 0.1         # blanks related to the target at least this strongly are worth a flag
 IMBALANCE_SHARE = 0.10       # smallest class below this share: the target is imbalanced
@@ -77,7 +78,7 @@ RARE_SHARE = 0.01            # pipeline(): categories rarer than this share are 
 REPEAT_MIN_SHARE = 0.02      # an ID column is "repeating" when at least this share of rows share a value
 
 # Order suggested steps are applied in, matching dst.clean()
-STEP_ORDER = {"duplicates": 0, "drop": 1, "type": 2, "missing": 3, "outliers": 4, "transform": 5,
+STEP_ORDER = {"names": 10, "duplicates": 0, "drop": 1, "type": 2, "missing": 3, "outliers": 4, "transform": 5,
               "encode": 6, "derive": 7, "note": 8}
 
 COLORS = {"bar": "#4c7cc4", "accent": "#c2410c", "grid": "#d9dee5", "ink": "#3d4653"}
@@ -201,6 +202,10 @@ class Profile:
             options = dict(opts)
             if action == "remove_duplicates":
                 lines.append(f"{d} = dst.remove_duplicates({d})")
+            elif action == "drop_rows":
+                lines.append(f"{d} = {d}.drop(index={list(options['rows'])!r})   # notes at the end of the file")
+            elif action == "clean_column_names":
+                lines.append(f"{d} = dst.clean_column_names({d})   # last, so the steps above can use the old names")
             elif action == "drop":
                 lines.append(f"{d} = {d}.drop(columns={cols(items)})")
             elif action == "to_boolean":
@@ -238,8 +243,11 @@ class Profile:
 
         # type conversions first, so later steps see True/False and dates rather than text
         conversions = ("dst.to_boolean(", "dst.to_datetime_columns(", "pd.to_numeric(", "dst.standardize_labels(")
-        return [line for line in lines if any(c in line for c in conversions)] + \
-               [line for line in lines if not any(c in line for c in conversions)]
+        ordered = [line for line in lines if any(c in line for c in conversions)] + \
+                  [line for line in lines if not any(c in line for c in conversions)]
+        opening = [line for line in ordered if ".drop(index=" in line]    # notes rows go before anything else
+        closing = [line for line in ordered if "clean_column_names" in line]
+        return opening + [line for line in ordered if line not in opening and line not in closing] + closing
 
     def pipeline(self, df_name: str = "df", missing_flags: Sequence[str] = (),
                  time_column: str | None = None) -> str:
@@ -325,7 +333,8 @@ class Profile:
         features += [f"{c}_missing" for c in flags]
 
         before = self._code_lines(d, [s for s in self.suggestions if s.action in
-                                      ("remove_duplicates", "to_numeric", "to_boolean", "standardize", "to_datetime")
+                                      ("drop_rows", "remove_duplicates", "to_numeric", "to_boolean", "standardize",
+                                       "to_datetime")
                                       and s.column not in excluded])
         if t.missing:
             before.append(f"{d} = {d}.dropna(subset=[{t.name!r}])   # rows without a target can't be used")
@@ -680,6 +689,12 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
 
     if sample is not None and (isinstance(sample, bool) or not isinstance(sample, int) or sample < 2):
         raise ValueError("sample must be a whole number of rows, 2 or more")
+    original = df
+    # Notes rows at the end of an export aren't data: the column analysis skips them (they'd make number
+    # columns look like text and add fake blanks), and the first suggestion drops them.
+    footer = _footer_rows(df)
+    if footer:
+        df = df.drop(index=footer).infer_objects()
     full = df
     if sample is not None and len(df) > sample:
         df = df.sample(n=sample, random_state=0)
@@ -690,6 +705,21 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
     if duplicates:
         suggestions.append(Suggestion(None, "duplicates", "high",
                                       f"{duplicates:,} duplicate row(s).", "remove_duplicates"))
+    if footer:
+        filled = int(original.loc[footer].notna().sum(axis=1).max())
+        suggestions.insert(0, Suggestion(None, "duplicates", "high",
+                                      f"The last {len(footer):,} row(s) are almost empty (at most {filled} of "
+                                      f"{original.shape[1]} columns filled), unlike the rest of the data: probably "
+                                      f"notes or footnotes at the end of an export. The column analysis below leaves "
+                                      f"them out; drop them first, since they can turn number columns into text.",
+                                      "drop_rows", {"rows": tuple(footer)}))
+    messy = [c for c in full.columns if isinstance(c, str) and c != " ".join(c.split())]
+    if messy:
+        examples = ", ".join(repr(c) for c in messy[:3])
+        suggestions.append(Suggestion(None, "names", "medium",
+                                      f"{len(messy)} column name(s) have hidden spaces or line breaks (e.g. "
+                                      f"{examples}): typing the name without them fails. clean_column_names() "
+                                      f"tidies them (and makes snake_case).", "clean_column_names"))
 
     names = [str(c) for c in df.columns]
     for name in df.columns:
@@ -735,9 +765,9 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
     order = {"high": 0, "medium": 1, "low": 2}
     suggestions.sort(key=lambda s: (STEP_ORDER.get(s.step, 9), order[s.severity]))
 
-    return Profile(title=title, n_rows=len(full), n_columns=df.shape[1], duplicates=duplicates,
-                   missing_cells=int(full.isna().sum().sum()),
-                   memory_bytes=int(full.memory_usage(deep=True).sum()), columns=columns,
+    return Profile(title=title, n_rows=len(original), n_columns=df.shape[1], duplicates=duplicates,
+                   missing_cells=int(original.isna().sum().sum()),
+                   memory_bytes=int(original.memory_usage(deep=True).sum()), columns=columns,
                    correlations=correlations, correlation_chart=corr_chart, suggestions=suggestions,
                    validation=validation, associations=related_pairs, associations_skipped=related_skipped,
                    target=target_profile, group=None if group is None else str(group),
@@ -923,6 +953,22 @@ def _profile_target(df: pd.DataFrame, target: Hashable, task: str,
                                   f"dst.MissingFiller(add_indicator=[{column!r}])."))
     return TargetProfile(name=name, task=kind, missing=missing, classes=classes, features=features,
                          missingness=missingness, leaks=leaks, untested=untested, after_outcome=declared), out
+
+
+def _footer_rows(df: pd.DataFrame) -> list[Any]:
+    """Labels of trailing rows that are almost empty when the rest of the data isn't: notes at the end of an export."""
+    rows, cols = df.shape
+    if rows < 20 or cols < 3:
+        return []
+    filled = df.notna().sum(axis=1).to_numpy()
+    sparse = filled <= max(1, cols // 5)
+    n = 0
+    while n < len(sparse) and sparse[len(sparse) - 1 - n]:
+        n += 1
+    body = sparse[: rows - n]
+    if n == 0 or n > max(1, min(FOOTER_MAX_ROWS, rows // 10)) or body.mean() > 0.02:
+        return []
+    return list(df.index[rows - n:])
 
 
 def _rule_label(r: Any) -> str:
