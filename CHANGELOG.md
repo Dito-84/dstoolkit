@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Docs:** a Design decisions section in the README and [docs/design-decisions.md](docs/design-decisions.md), with the reasons, alternatives and costs behind the main choices. The README now links the live browser app. No code changes.
+
 ## 0.15.0
 
 Two problems from real hospital exports, found by reviewing the earlier 2023 drafts.
