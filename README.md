@@ -22,6 +22,18 @@ dstoolkit is for **getting to know a dataset and cleaning it once**: profiling a
 
 The cleaning functions (`fill_missing`, `normalize`, `encode_categorical`, `handle_outliers`) learn their numbers (means, ranges, categories, outlier bounds) from the DataFrame you pass in and apply them in the same call. That's right for exploring data, but **not before a model**: run them on a full dataset before splitting it, and information from the test rows leaks into training. For machine learning, use the [transformers](#transformers-for-machine-learning-dstoolkittransformers) instead. They learn on the training rows only and work inside a scikit-learn `Pipeline`, so cross-validation refits them on each fold.
 
+## Design decisions
+
+A few choices shape everything else:
+
+- **Never change the input, never guess.** Functions return a new DataFrame. When a guess could damage data (1/0 as True/False, swapping day and month, filling an ID with its mean), dstoolkit leaves the data alone or asks you to be explicit.
+- **Learn from training rows only.** The cleaning functions are for exploring. For models, the transformers fit on training data inside a scikit-learn `Pipeline`, so no test data leaks into training.
+- **Report leaks, don't hide them.** `profile(target=...)` flags columns that give the answer away, and the generated script leaves them out with a comment. On the Titanic data, the lifeboat column alone lifts accuracy from 0.785 to 0.976.
+- **Validate honestly.** Repeated patients get grouped folds, time-ordered data gets a past-to-future split, and every score is shown next to a no-skill baseline.
+- **Judge drift by size, not significance.** `compare()` rates change by the population stability index, so thousands of rows don't make a trivial shift look alarming.
+
+The reasons, alternatives and costs for these and more are in [docs/design-decisions.md](docs/design-decisions.md).
+
 ## Profile a dataset in one call
 
 ```python
@@ -212,7 +224,7 @@ On the data they were fitted on, they give the same results as `fill_missing`, `
 
 ## Browser app
 
-[`app/`](app/) is a drag-and-drop page: drop a CSV or Excel file to get the profile and a list of suggested cleaning steps, untick any you don't want, and download the cleaned CSV, the report and a Python script that repeats the same steps. Python runs inside the browser ([Pyodide](https://pyodide.org)), so the file is never uploaded. A Content-Security-Policy makes the browser enforce that: the page may only talk to its own site and one pinned Pyodide release. It's tested end to end in a real browser in CI. See [`app/README.md`](app/README.md) to run it locally; it will be published on GitHub Pages.
+[`app/`](app/) is a drag-and-drop page: drop a CSV or Excel file to get the profile and a list of suggested cleaning steps, untick any you don't want, and download the cleaned CSV, the report and a Python script that repeats the same steps. Python runs inside the browser ([Pyodide](https://pyodide.org)), so the file is never uploaded. A Content-Security-Policy makes the browser enforce that: the page may only talk to its own site and one pinned Pyodide release. It's tested end to end in a real browser in CI. It's live at [dito-84.github.io/dstoolkit](https://dito-84.github.io/dstoolkit/); see [`app/README.md`](app/README.md) to run it locally.
 
 ## Cleaning: `dstoolkit.cleaning`
 
@@ -333,7 +345,7 @@ tests/                pytest suite
 app/                  drag-and-drop browser app (page, Python glue, build script, tests)
 notebooks/            worked examples on real data
 notebooks/learning/   tutorial notebooks
-docs/                 README screenshot and an example report
+docs/                 design decisions, README screenshot and an example report
 data/                 StudentData.csv, titanic3.csv
 .github/workflows/    CI (tests, minimum versions, browser app) and the GitHub Pages deploy
 ```
