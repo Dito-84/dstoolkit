@@ -1,4 +1,4 @@
-name: Publish app
+name: Deploy browser app
 
 # Publishes the drag-and-drop app to GitHub Pages. Free GitHub accounts can only
 # publish Pages from public repositories, so this skips itself while the repo is private.
