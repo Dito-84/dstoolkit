@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.16.0
+
+- **New: `add_days_between(df, start, end, name)`** adds the whole calendar days from one date column to another, such as length of stay from admission and discharge dates. A time of day doesn't count, so a same-day discharge is 0. An end dated before its start is a data error, so it's left missing and counted in the summary; pass `allow_negative=True` when negative gaps are meaningful (days paid early, say). Text dates are read like `to_datetime_columns()`, never swapping day and month. It's the cleaning-stage partner of `add_age_column`; for a model, `DateFeatures(intervals=...)` does the same inside a pipeline.
+- Found by reviewing the last of the earlier drafts (issue #10). The other draft functions were already covered: yes/no to True/False (`to_boolean`), date columns (`to_datetime_columns`), column names (`clean_column_names`), age at admission (`add_age_column(as_of=...)`), notes rows at the end of an export (`profile()`), categories (`to_category`) and counts (`show_counts`).
+
 ## 0.15.2
 
 - **Published on PyPI as `pandas-dstoolkit`:** `pip install pandas-dstoolkit`, still imported as `dstoolkit`. PyPI ignores hyphens and dots when comparing names, so `dstoolkit` counted as a copy of an unrelated `ds-toolkit`. A GitHub release now uploads that version automatically through PyPI's trusted publishing (OpenID Connect), so no upload token is stored anywhere. Running the workflow by hand uploads to TestPyPI first, to check a release before making it. The build checks that the release tag matches the version, that the wheel installs and imports on its own (without loading matplotlib), and points the README's links at the release, so the PyPI page shows its images. No code changes.

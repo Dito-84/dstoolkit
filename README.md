@@ -247,6 +247,7 @@ On the data they were fitted on, they give the same results as `fill_missing`, `
 | `encode_categorical(df, columns)` | One-hot or label encoding per column; label codes keep missing values missing |
 | `normalize(df, columns)` | Min-max (0–1) or z-score scaling per column |
 | `add_age_column(df, dob_column, as_of)` | Age in completed years from a birth-date column, as of today or another date column. Unreadable or future birth dates give a missing age, and are counted in the summary |
+| `add_days_between(df, start, end, name)` | Whole calendar days from one date column to another, such as length of stay. An end before its start (a discharge dated before its admission) is left missing and counted, unless `allow_negative=True` |
 | `clean(df, ...)` | Runs types → duplicates → missing values → outliers → encoding → scaling in one call. Only duplicate removal is on by default; every other step is opt-in |
 
 ## Profiling: `dstoolkit.profiling`
