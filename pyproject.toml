@@ -3,7 +3,7 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dstoolkit"
+name = "pandas-dstoolkit"   # on PyPI; the import name is dstoolkit (PyPI treats "dstoolkit" as too close to "ds-toolkit")
 dynamic = ["version"]
 description = "Data cleaning and exploratory analysis helpers for pandas: duplicates, missing values, outliers, encoding, scaling, distributions and line fits"
 readme = "README.md"
@@ -13,7 +13,15 @@ authors = [{ name = "Rolando Rodriguez Jr." }]
 requires-python = ">=3.10"
 keywords = ["data cleaning", "preprocessing", "eda", "pandas", "data science"]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering :: Information Analysis",
     "Typing :: Typed",
@@ -31,6 +39,7 @@ notebooks = ["jupyter"]
 dev = ["scikit-learn>=1.3", "pytest", "pytest-cov", "mypy", "pandas-stubs", "ruff", "nbconvert", "nbclient", "ipykernel"]
 
 [project.urls]
+Homepage = "https://dito-84.github.io/dstoolkit/"
 Repository = "https://github.com/Dito-84/dstoolkit"
 Changelog = "https://github.com/Dito-84/dstoolkit/blob/main/CHANGELOG.md"
 

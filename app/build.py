@@ -30,7 +30,7 @@ def build(out: Path) -> Path:
 
     with tempfile.TemporaryDirectory() as tmp:
         subprocess.run([sys.executable, "-m", "pip", "wheel", "--no-deps", "-q", "-w", tmp, str(ROOT)], check=True)
-        wheels = list(Path(tmp).glob("dstoolkit-*.whl"))
+        wheels = list(Path(tmp).glob("pandas_dstoolkit-*.whl"))
         if len(wheels) != 1:
             sys.exit(f"Expected one dstoolkit wheel, found {wheels}")
         wheel = shutil.copy(wheels[0], out)

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.15.2
+
+- **Published on PyPI as `pandas-dstoolkit`:** `pip install pandas-dstoolkit`, still imported as `dstoolkit`. PyPI ignores hyphens and dots when comparing names, so `dstoolkit` counted as a copy of an unrelated `ds-toolkit`. A GitHub release now uploads that version automatically through PyPI's trusted publishing (OpenID Connect), so no upload token is stored anywhere. Running the workflow by hand uploads to TestPyPI first, to check a release before making it. The build checks that the release tag matches the version, that the wheel installs and imports on its own (without loading matplotlib), and points the README's links at the release, so the PyPI page shows its images. No code changes.
+
 ## 0.15.1
 
 - **`import dstoolkit` no longer loads matplotlib.** The plotting functions and the charts in `profile()` reports import it the first time they draw, so nothing changes in a notebook. `compare()`, `profile(charts=False)`, `validate()` and the cleaning functions now run where matplotlib isn't installed, such as an AWS Lambda zip package, which has a 250 MB limit that pandas, NumPy, SciPy and matplotlib together exceed. Importing is also faster. matplotlib is still a required dependency; a test checks that it stays unloaded until something is drawn.

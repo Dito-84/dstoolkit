@@ -187,7 +187,7 @@ def _script(steps: str) -> str:
         body.pop(0)
     return "\n".join([
         "# Cleaning steps chosen in the dstoolkit browser app",
-        "# pip install git+https://github.com/Dito-84/dstoolkit",
+        "# pip install pandas-dstoolkit",
         "import pandas as pd",
         "import dstoolkit as dst",
         "",
