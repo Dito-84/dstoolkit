@@ -20,3 +20,20 @@ def test_all_lists_only_real_names():
 
 def test_package_ships_type_information():
     assert resources.files("dstoolkit").joinpath("py.typed").is_file()
+
+
+def test_matplotlib_loads_only_when_something_is_drawn():
+    # compare(), profile() and the checks must run where matplotlib isn't installed,
+    # such as a size-limited AWS Lambda package; plotting imports it on first use
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, pandas as pd, dstoolkit as dst\n"
+        "a = pd.DataFrame({'n': range(40), 'c': ['x', 'y'] * 20})\n"
+        "dst.compare(a, a, verbose=False)\n"
+        "dst.profile(a, charts=False)\n"
+        "print(sorted(m for m in sys.modules if m.split('.')[0] == 'matplotlib'))\n"
+    )
+    result = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, check=True)
+    assert result.stdout.strip() == "[]"

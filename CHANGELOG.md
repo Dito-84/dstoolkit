@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.15.1
+
+- **`import dstoolkit` no longer loads matplotlib.** The plotting functions and the charts in `profile()` reports import it the first time they draw, so nothing changes in a notebook. `compare()`, `profile(charts=False)`, `validate()` and the cleaning functions now run where matplotlib isn't installed, such as an AWS Lambda zip package, which has a 250 MB limit that pandas, NumPy, SciPy and matplotlib together exceed. Importing is also faster. matplotlib is still a required dependency; a test checks that it stays unloaded until something is drawn.
+
 ## 0.15.0
 
 Two problems from real hospital exports, found by reviewing the earlier 2023 drafts.
