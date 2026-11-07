@@ -341,6 +341,55 @@ def test_add_age_reads_day_first_birth_dates_consistently():
         pp.add_age_column(mixed)
 
 
+# ---------- days between two dates ----------
+
+def test_days_between_counts_calendar_days_after_the_end_column():
+    # Made-up stays: 3 nights, same day (a time of day doesn't count), across a month end
+    d = pd.DataFrame({"admitted": ["2020-01-01", "2020-03-05 08:00", "2021-01-30"],
+                      "discharged": ["2020-01-04", "2020-03-05 17:30", "2021-02-02"],
+                      "ward": ["A", "B", "C"]})
+    out = pp.add_days_between(d, "admitted", "discharged", name="length_of_stay", verbose=False)
+    assert out["length_of_stay"].tolist() == [3, 0, 3]
+    assert str(out["length_of_stay"].dtype) == "Int64"
+    assert list(out.columns) == ["admitted", "discharged", "length_of_stay", "ward"]
+    assert "length_of_stay" not in d.columns                  # input unchanged
+
+
+def test_days_between_leaves_an_end_before_its_start_missing_and_says_so(capsys):
+    d = pd.DataFrame({"start": ["2020-01-10", "2020-01-10", "2020-01-10", None],
+                      "end": ["2020-01-05", "2020-01-12", "not a date", "2020-01-12"]})
+    out = pp.add_days_between(d, "start", "end")
+    assert out["days_start_to_end"].isna().tolist() == [True, False, True, True]
+    assert out["days_start_to_end"].iloc[1] == 2
+    msg = capsys.readouterr().out
+    assert "1 'end' date(s) couldn't be read" in msg and "1 'end' date(s) fall before 'start'" in msg
+    assert "'start' date(s) couldn't be read" not in msg         # a blank isn't unreadable
+
+
+def test_days_between_can_keep_negative_gaps():
+    d = pd.DataFrame({"due": ["2020-01-10"], "paid": ["2020-01-07"]})
+    out = pp.add_days_between(d, "due", "paid", allow_negative=True, verbose=False)
+    assert out["days_due_to_paid"].tolist() == [-3]
+
+
+def test_days_between_reads_day_first_text_like_to_datetime_columns():
+    # 25/12 shows the columns are day-first, so 01/02 is 1 February
+    d = pd.DataFrame({"a": ["01/02/2020", "25/12/2020"], "b": ["03/02/2020", "27/12/2020"]})
+    out = pp.add_days_between(d, "a", "b", verbose=False)
+    assert out["days_a_to_b"].tolist() == [2, 2]
+
+
+def test_days_between_updates_an_existing_column_and_rejects_bad_input():
+    d = pd.DataFrame({"a": pd.to_datetime(["2020-01-01"]), "b": pd.to_datetime(["2020-01-11"]), "gap": [0]})
+    assert pp.add_days_between(d, "a", "b", name="gap", verbose=False)["gap"].tolist() == [10]
+    with pytest.raises(KeyError):
+        pp.add_days_between(d, "a", "missing")
+    with pytest.raises(ValueError, match="different columns"):
+        pp.add_days_between(d, "a", "a")
+    with pytest.raises(TypeError, match="numbers, not dates"):
+        pp.add_days_between(d, "gap", "b")
+
+
 def test_knn_without_scikit_learn_says_what_to_install(monkeypatch):
     # scikit-learn is an optional extra from 0.8.0; None in sys.modules makes the import fail
     import sys

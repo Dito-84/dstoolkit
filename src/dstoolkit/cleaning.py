@@ -65,6 +65,7 @@ __all__ = [
     "encode_categorical",
     "normalize",
     "add_age_column",
+    "add_days_between",
     "clean",
 ]
 
@@ -890,6 +891,53 @@ def add_age_column(df: pd.DataFrame, dob_column: str | None = None,
     ) if n]
     if problems:
         message += f" Ages left missing: {'; '.join(problems)}."
+    _say(verbose, message)
+    return result
+
+
+def add_days_between(df: pd.DataFrame, start: str, end: str, name: str | None = None,
+                     allow_negative: bool = False, verbose: bool = True) -> pd.DataFrame:
+    """Add the number of days from one date column to another, e.g. length of stay.
+
+    start, end: date columns (or date text); the result is end minus start in
+                whole calendar days, so a same-day discharge is 0
+    name: the new column (default: "days_<start>_to_<end>"); placed after end
+    allow_negative: by default an end before its start (a discharge dated
+                    before its admission) is a data error, so it's left missing
+                    and counted. Pass True when negative gaps are meaningful.
+
+    Dates written as text are read the same way as to_datetime_columns(): day
+    and month are never swapped, and a column mixing both orders raises an error.
+    Blank or unreadable dates give a missing result; the summary says how many
+    couldn't be read. For a model, use DateFeatures(intervals=...) instead, which
+    does the same inside a scikit-learn Pipeline.
+    """
+    _check_columns(df, [start, end])
+    if start == end:
+        raise ValueError("start and end must be different columns")
+    name = name or f"days_{start}_to_{end}"
+
+    first, first_unread = _read_dates(df[start], start)
+    last, last_unread = _read_dates(df[end], end)
+    days = (last.dt.normalize() - first.dt.normalize()).dt.days.astype("Int64")
+    backwards = 0 if allow_negative else int((days < 0).sum())
+    if backwards:
+        days = days.mask(days < 0)
+
+    result = df.copy()
+    if name in result.columns:
+        result[name] = days
+        message = f"Updated {name!r}: days from {start!r} to {end!r}."
+    else:
+        result.insert(_position(result, end) + 1, name, days)
+        message = f"Added {name!r}: days from {start!r} to {end!r}."
+    problems = [f"{n} {what}" for n, what in (
+        (first_unread, f"{start!r} date(s) couldn't be read"),
+        (last_unread, f"{end!r} date(s) couldn't be read"),
+        (backwards, f"{end!r} date(s) fall before {start!r}"),
+    ) if n]
+    if problems:
+        message += f" Left missing: {'; '.join(problems)}."
     _say(verbose, message)
     return result
 

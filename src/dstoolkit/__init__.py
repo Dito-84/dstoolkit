@@ -21,6 +21,7 @@ from . import cleaning, exploration, monitoring, profiling, validation
 from ._messages import get_message_output, set_message_output
 from .cleaning import (
     add_age_column,
+    add_days_between,
     clean,
     clean_column_names,
     convert_types,
@@ -56,7 +57,7 @@ from .monitoring import compare
 from .profiling import ColumnProfile, Profile, Suggestion, TargetProfile, profile
 from .validation import ColumnRule, Comparison, RuleResult, ValidationError, ValidationReport, validate
 
-__version__ = "0.15.2"
+__version__ = "0.16.0"
 
 # The transformers need scikit-learn (an optional extra), so they're imported on
 # first use: `dst.Scaler` works when scikit-learn is installed, and `import
