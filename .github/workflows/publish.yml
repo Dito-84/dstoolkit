@@ -1,0 +1,87 @@
+name: Publish to PyPI
+
+# Publishing a GitHub release uploads that version to PyPI. Running the workflow by hand
+# (Actions → Publish to PyPI → Run workflow) uploads the current main to TestPyPI instead,
+# to check a release before making it. No API token is stored: PyPI trusts this workflow
+# through OIDC ("trusted publishing"), and only from the matching environment.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Release tag matches the package version
+        if: github.event_name == 'release'
+        run: |
+          version=$(python -c "import ast,sys; t=ast.parse(open('src/dstoolkit/__init__.py').read()); print(next(n.value.value for n in t.body if isinstance(n, ast.Assign) and n.targets[0].id == '__version__'))")
+          if [ "${{ github.event.release.tag_name }}" != "v$version" ]; then
+            echo "::error::Release tag ${{ github.event.release.tag_name }} doesn't match __version__ $version"
+            exit 1
+          fi
+
+      - name: Point the README's links at this release (PyPI can't follow relative links)
+        run: python .github/scripts/pypi_readme.py "${{ github.event.release.tag_name || github.sha }}"
+
+      - name: Build
+        run: |
+          pip install build twine
+          python -m build
+          twine check --strict dist/*
+
+      - name: Install the wheel on its own and import it
+        run: |
+          python -m venv /tmp/check
+          /tmp/check/bin/pip install dist/*.whl
+          cd /tmp && /tmp/check/bin/python -I -c "import sys, dstoolkit; print(dstoolkit.__version__); assert 'matplotlib' not in sys.modules"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  testpypi:
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/dstoolkit
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # release/v1; pinned by commit because it holds the upload credentials
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  pypi:
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/dstoolkit
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # release/v1; pinned by commit because it holds the upload credentials

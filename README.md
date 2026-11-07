@@ -7,14 +7,16 @@
 ## Install
 
 ```bash
-pip install git+https://github.com/Dito-84/dstoolkit
+pip install dstoolkit
 ```
 
 Requires Python 3.10+, with pandas, NumPy, matplotlib and SciPy. The [scikit-learn transformers](#transformers-for-machine-learning-dstoolkittransformers) and k-nearest-neighbours filling also need scikit-learn, which is optional:
 
 ```bash
-pip install "dstoolkit[sklearn] @ git+https://github.com/Dito-84/dstoolkit"
+pip install "dstoolkit[sklearn]"
 ```
+
+Releases are published to [PyPI](https://pypi.org/project/dstoolkit/) by GitHub Actions through trusted publishing, so no upload token exists to leak. To install the latest code from GitHub instead: `pip install git+https://github.com/Dito-84/dstoolkit`.
 
 ## What it's for, and what it isn't
 
@@ -347,7 +349,7 @@ notebooks/            worked examples on real data
 notebooks/learning/   tutorial notebooks
 docs/                 design decisions, README screenshot and an example report
 data/                 StudentData.csv, titanic3.csv
-.github/workflows/    CI (tests, minimum versions, browser app) and the GitHub Pages deploy
+.github/workflows/    CI (tests, minimum versions, browser app), the GitHub Pages deploy and the PyPI release
 ```
 
 ## Development
@@ -361,7 +363,7 @@ mypy           # type check
 ruff check .   # lint: style, import order, likely bugs
 ```
 
-The tests check every function, including that inputs are never modified, that every plot draws when values are missing, that report HTML escapes column names, that the code `profile()` suggests actually runs, and that the transformers learn nothing from test data. Every bug fix has a test that reproduces the bug. The browser app is tested end to end in a real Chromium, and fails on any security-policy violation. GitHub Actions runs the linter, the type check, the tests with coverage and every notebook on Python 3.10 and 3.13 for each push and pull request, and runs the tests again with the oldest versions of pandas, NumPy, matplotlib, SciPy and scikit-learn that dstoolkit says it supports. See [CHANGELOG.md](CHANGELOG.md) for version history.
+The tests check every function, including that inputs are never modified, that every plot draws when values are missing, that report HTML escapes column names, that the code `profile()` suggests actually runs, and that the transformers learn nothing from test data. Every bug fix has a test that reproduces the bug. The browser app is tested end to end in a real Chromium, and fails on any security-policy violation. GitHub Actions runs the linter, the type check, the tests with coverage and every notebook on Python 3.10, 3.13 and 3.14 for each push and pull request, and runs the tests again with the oldest versions of pandas, NumPy, matplotlib, SciPy and scikit-learn that dstoolkit says it supports. See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 Changes go through a pull request and squash-merge. The branch rules for `main` are kept in [`.github/rulesets/protect-main.json`](.github/rulesets/protect-main.json): a pull request is required, all four CI checks must pass on an up-to-date branch, merges are squash-only, and `main` can't be force-pushed or deleted. A test keeps the required checks in step with the CI jobs.
 
