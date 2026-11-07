@@ -32,11 +32,13 @@ import re
 from collections.abc import Hashable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 import pandas as pd
-from matplotlib.figure import Figure
+
+if TYPE_CHECKING:  # matplotlib loads only when a report draws a chart
+    from matplotlib.figure import Figure
 
 from .cleaning import (
     DATE_PATTERN,
@@ -1203,6 +1205,8 @@ def _style(ax: Any) -> None:
 
 
 def _histogram(x: pd.Series, discrete: bool = False) -> str:
+    from matplotlib.figure import Figure
+
     fig = Figure(figsize=(3.6, 1.8))
     ax = fig.add_subplot()
     if discrete:
@@ -1220,6 +1224,8 @@ def _histogram(x: pd.Series, discrete: bool = False) -> str:
 def _bars(counts: pd.Series) -> str:
     counts = counts.iloc[::-1]
     labels = [str(k) if len(str(k)) <= 22 else str(k)[:21] + "…" for k in counts.index]
+    from matplotlib.figure import Figure
+
     fig = Figure(figsize=(3.6, 0.35 + 0.22 * len(counts)))
     ax = fig.add_subplot()
     ax.barh(labels, counts.to_numpy(dtype=float), color=COLORS["bar"])
@@ -1267,6 +1273,8 @@ def _p_text(p: float) -> str:
 def _heatmap(corr: pd.DataFrame) -> str:
     n = corr.shape[0]
     size = max(3.5, 0.55 * n + 1.5)
+    from matplotlib.figure import Figure
+
     fig = Figure(figsize=(size, size * 0.85))
     ax = fig.add_subplot()
     image = ax.imshow(corr.values, cmap="RdBu_r", vmin=-1, vmax=1)

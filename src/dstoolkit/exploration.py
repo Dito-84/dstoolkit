@@ -21,15 +21,16 @@ from __future__ import annotations
 import itertools
 import warnings
 from collections.abc import Callable, Hashable, Sequence
-from typing import Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.axes import Axes
-from matplotlib.figure import Figure
 
 from ._messages import say
+
+if TYPE_CHECKING:  # matplotlib loads only when a plot is drawn, so compare() and the
+    from matplotlib.axes import Axes  # checks run without it (for example in AWS Lambda)
+    from matplotlib.figure import Figure
 
 __all__ = [
     "drop_nulls",
@@ -88,6 +89,7 @@ def show_eda(var_data: pd.Series) -> None:
 def show_eda_table(var_data: pd.Series, decimals: int = 2) -> Figure:
     """Draw the .describe() statistics for a Series as a table figure."""
     data = drop_nulls(var_data)
+    import matplotlib.pyplot as plt
     fig, ax = plt.subplots()
     ax.axis("off")
     pd.plotting.table(ax, data.describe().round(decimals), loc="center",
@@ -114,6 +116,7 @@ def _trim_density(ax: Axes, data: pd.Series) -> None:
 def show_histogram(var_data: pd.Series, title: str = "Data Distribution") -> Figure:
     """Histogram with mean, median and mode lines."""
     data = drop_nulls(var_data)
+    import matplotlib.pyplot as plt
     fig, ax = plt.subplots(figsize=(10, 4))
     ax.hist(data)
     _mark_center(ax, data)
@@ -127,6 +130,7 @@ def show_histogram(var_data: pd.Series, title: str = "Data Distribution") -> Fig
 def show_distribution(var_data: pd.Series, title: str = "Data Distribution") -> Figure:
     """Histogram (with center lines) stacked above a horizontal boxplot."""
     data = drop_nulls(var_data)
+    import matplotlib.pyplot as plt
     fig, ax = plt.subplots(2, 1, figsize=(12.8, 7.2), sharex=True)
     ax[0].hist(data)
     ax[0].set_ylabel("Frequency")
@@ -141,6 +145,7 @@ def show_distribution(var_data: pd.Series, title: str = "Data Distribution") -> 
 def show_density(var_data: pd.Series, title: str = "Data Density") -> Figure:
     """Kernel density curve with mean and median lines."""
     data = drop_nulls(var_data)
+    import matplotlib.pyplot as plt
     fig, ax = plt.subplots(figsize=(10, 4))
     data.plot.density(ax=ax)
     _trim_density(ax, data)
@@ -153,6 +158,7 @@ def show_density(var_data: pd.Series, title: str = "Data Density") -> Figure:
 def show_distribution_profile(var_data: pd.Series, title: str = "Data Distribution") -> Figure:
     """2x2 overview: histogram, density curve, boxplot and summary table."""
     data = drop_nulls(var_data)
+    import matplotlib.pyplot as plt
     fig, ax = plt.subplots(2, 2, figsize=(12.8, 7.2))
 
     ax[0, 0].hist(data)
@@ -217,6 +223,7 @@ def show_counts(var_data: pd.Series, top: int = 15, include_missing: bool = True
         counts = pd.concat([counts, pd.Series({"(missing)": missing})])
     total = counts.sum()
 
+    import matplotlib.pyplot as plt
     fig, ax = plt.subplots(figsize=(10, max(2.5, 0.4 * len(counts) + 1)))
     labels = [str(v) for v in counts.index][::-1]   # barh draws bottom-up; largest goes on top
     sizes = [int(n) for n in counts.to_numpy()][::-1]
@@ -251,6 +258,7 @@ def show_grouped_box(df: pd.DataFrame, value: str, by: str, max_groups: int = 20
     largest = sorted(groups, key=lambda k: len(groups[k]), reverse=True)[:max_groups]
     order = sorted(largest, key=lambda k: groups[k].median())  # bottom-to-top: highest median on top
 
+    import matplotlib.pyplot as plt
     fig, ax = plt.subplots(figsize=(10, max(3, 0.45 * len(order) + 1.5)))
     ax.boxplot([groups[k] for k in order], orientation="horizontal",
                tick_labels=[f"{k} (n={len(groups[k]):,})" for k in order])
@@ -285,6 +293,7 @@ def show_scatter(x: pd.Series, y: pd.Series, size: pd.Series | None = None, tren
         span = s.max() - s.min()
         areas = 20 + 380 * ((s - s.min()) / span if span else 0 * s + 0.5)
 
+    import matplotlib.pyplot as plt
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.scatter(pairs["x"], pairs["y"], s=areas, alpha=0.6 if size is not None else 0.8)
     if trend and len(pairs) >= 2 and pairs["x"].nunique() > 1:
