@@ -3,7 +3,7 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dstoolkit"
+name = "pandas-dstoolkit"   # on PyPI; the import name is dstoolkit (PyPI treats "dstoolkit" as too close to "ds-toolkit")
 dynamic = ["version"]
 description = "Data cleaning and exploratory analysis helpers for pandas: duplicates, missing values, outliers, encoding, scaling, distributions and line fits"
 readme = "README.md"

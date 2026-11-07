@@ -7,16 +7,16 @@
 ## Install
 
 ```bash
-pip install dstoolkit
+pip install pandas-dstoolkit
 ```
 
 Requires Python 3.10+, with pandas, NumPy, matplotlib and SciPy. The [scikit-learn transformers](#transformers-for-machine-learning-dstoolkittransformers) and k-nearest-neighbours filling also need scikit-learn, which is optional:
 
 ```bash
-pip install "dstoolkit[sklearn]"
+pip install "pandas-dstoolkit[sklearn]"
 ```
 
-Releases are published to [PyPI](https://pypi.org/project/dstoolkit/) by GitHub Actions through trusted publishing, so no upload token exists to leak. To install the latest code from GitHub instead: `pip install git+https://github.com/Dito-84/dstoolkit`.
+It installs as `pandas-dstoolkit` (PyPI treats `dstoolkit` as too close to an unrelated `ds-toolkit`) and imports as `dstoolkit`. Releases are published to [PyPI](https://pypi.org/project/pandas-dstoolkit/) by GitHub Actions through trusted publishing, so no upload token exists to leak. To install the latest code from GitHub instead: `pip install git+https://github.com/Dito-84/dstoolkit`.
 
 ## What it's for, and what it isn't
 

@@ -2,7 +2,7 @@
 
 ## 0.15.2
 
-- **Published on PyPI:** `pip install dstoolkit`. A GitHub release now uploads that version automatically through PyPI's trusted publishing (OpenID Connect), so no upload token is stored anywhere. Running the workflow by hand uploads to TestPyPI first, to check a release before making it. The build checks that the release tag matches the version, that the wheel installs and imports on its own (without loading matplotlib), and points the README's links at the release, so the PyPI page shows its images. No code changes.
+- **Published on PyPI as `pandas-dstoolkit`:** `pip install pandas-dstoolkit`, still imported as `dstoolkit`. PyPI ignores hyphens and dots when comparing names, so `dstoolkit` counted as a copy of an unrelated `ds-toolkit`. A GitHub release now uploads that version automatically through PyPI's trusted publishing (OpenID Connect), so no upload token is stored anywhere. Running the workflow by hand uploads to TestPyPI first, to check a release before making it. The build checks that the release tag matches the version, that the wheel installs and imports on its own (without loading matplotlib), and points the README's links at the release, so the PyPI page shows its images. No code changes.
 
 ## 0.15.1
 
