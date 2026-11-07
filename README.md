@@ -365,7 +365,7 @@ ruff check .   # lint: style, import order, likely bugs
 
 The tests check every function, including that inputs are never modified, that every plot draws when values are missing, that report HTML escapes column names, that the code `profile()` suggests actually runs, and that the transformers learn nothing from test data. Every bug fix has a test that reproduces the bug. The browser app is tested end to end in a real Chromium, and fails on any security-policy violation. GitHub Actions runs the linter, the type check, the tests with coverage and every notebook on Python 3.10, 3.13 and 3.14 for each push and pull request, and runs the tests again with the oldest versions of pandas, NumPy, matplotlib, SciPy and scikit-learn that dstoolkit says it supports. See [CHANGELOG.md](CHANGELOG.md) for version history.
 
-Changes go through a pull request and squash-merge. The branch rules for `main` are kept in [`.github/rulesets/protect-main.json`](.github/rulesets/protect-main.json): a pull request is required, all four CI checks must pass on an up-to-date branch, merges are squash-only, and `main` can't be force-pushed or deleted. A test keeps the required checks in step with the CI jobs.
+Changes go through a pull request and squash-merge. The branch rules for `main` are kept in [`.github/rulesets/protect-main.json`](.github/rulesets/protect-main.json): a pull request is required, all five CI checks must pass on an up-to-date branch, merges are squash-only, and `main` can't be force-pushed or deleted. A test keeps the required checks in step with the CI jobs.
 
 ## Used in
 

@@ -31,5 +31,5 @@ def test_ruleset_requires_exactly_the_checks_ci_runs():
     ruleset = json.loads((ROOT / ".github" / "rulesets" / "protect-main.json").read_text(encoding="utf-8"))
     rules = {r["type"]: r.get("parameters", {}) for r in ruleset["rules"]}
     required = {c["context"] for c in rules["required_status_checks"]["required_status_checks"]}
-    assert required == _ci_check_names() == {"test (3.10)", "test (3.13)", "test (minimum versions)", "browser-app"}
+    assert required == _ci_check_names() == {"test (3.10)", "test (3.13)", "test (3.14)", "test (minimum versions)", "browser-app"}
     assert rules["pull_request"]["allowed_merge_methods"] == ["squash"]
