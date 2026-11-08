@@ -376,8 +376,9 @@ def associations(df: pd.DataFrame, columns: Sequence[str] | None = None,
     normal: dict[Any, bool] = {}
     rows: list[dict[str, Any]] = []
     for a, b in pairs:
-        both = df[a].notna() & df[b].notna()          # pair rows first, then drop missing values
-        x, y = df.loc[both, a], df.loc[both, b]
+        both = (df[a].notna() & df[b].notna()).to_numpy()   # pair rows first, then drop missing values
+        # by position, so repeated row labels can't misalign the pair
+        x, y = df[a][both].reset_index(drop=True), df[b][both].reset_index(drop=True)
         if kinds[a] == kinds[b] == "numeric":
             if method == "auto":
                 for name in (a, b):

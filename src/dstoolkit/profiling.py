@@ -45,9 +45,11 @@ from .cleaning import (
     DOB_NAME_HINTS,
     NUMERIC_DATE,
     _bounds,
+    _calendar_days,
     _date_order,
     _is_yes_no,
     _normalized,
+    _offset_kind,
     _parse_dates,
     _standard_spellings,
 )
@@ -696,7 +698,7 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
     # columns look like text and add fake blanks), and the first suggestion drops them.
     footer = _footer_rows(df)
     if footer:
-        df = df.drop(index=footer).infer_objects()
+        df = df.iloc[: len(df) - len(footer)].infer_objects()   # by position: row labels may repeat
     full = df
     if sample is not None and len(df) > sample:
         df = df.sample(n=sample, random_state=0)
@@ -830,7 +832,7 @@ def _readable_dates(df: pd.DataFrame, skip: Hashable) -> dict[str, pd.Series]:
         elif _kind(series) == "datetime":
             text = _normalized(series)
             order, _ = _date_order(text)
-            if order != "conflict":
+            if order != "conflict" and _offset_kind(text)[0] != "mixed":
                 found[str(col)] = _parse_dates(text, dayfirst=order == "day_first")
     return found
 
@@ -848,7 +850,7 @@ def _date_checks(df: pd.DataFrame, target: Hashable, target_values: pd.Series) -
     for i, a in enumerate(names):
         for b in names[i + 1:]:
             later, earlier = (b, a) if dates[b].median() >= dates[a].median() else (a, b)
-            numbers[f"days from {earlier} to {later}"] = (dates[later] - dates[earlier]).dt.days
+            numbers[f"days from {earlier} to {later}"] = _calendar_days(dates[earlier], dates[later])
     frame = pd.DataFrame({k: v.astype("float") for k, v in numbers.items()}, index=df.index)
     frame = frame.loc[:, frame.nunique() > 1]
     if frame.empty:
@@ -1108,8 +1110,17 @@ def _profile_column(series: pd.Series, name: str, charts: bool, max_categories: 
             else:
                 text = _normalized(values)
                 order, examples = _date_order(text)
-                dates = _parse_dates(text, dayfirst=order == "day_first")
-                if order == "conflict":
+                offsets, offset_examples = _offset_kind(text)
+                if offsets == "mixed":
+                    order = "conflict"      # can't be read safely, so no earliest/latest and no date advice
+                    dates = pd.Series(pd.NaT, index=values.index, dtype="datetime64[ns]")
+                    suggest("type", "high", f"Some dates have a UTC offset and some don't (e.g. "
+                            f"{offset_examples[0]!r} and {offset_examples[1]!r}), so the ones without can't be "
+                            f"placed in time. Fix them at the source (add the offset or time zone the system "
+                            f"used), then convert with to_datetime_columns().")
+                else:
+                    dates = _parse_dates(text, dayfirst=order == "day_first")
+                if order == "conflict" and offsets != "mixed":
                     dates = dates.where(dates.isna())  # can't be read reliably, so no earliest/latest
                     only_day, only_month, either = _date_order_counts(text)
                     suggest("type", "high", f"Dates mix day-first and month-first order (e.g. {examples[0]!r} "
@@ -1118,7 +1129,7 @@ def _profile_column(series: pd.Series, name: str, charts: bool, max_categories: 
                             f"read them all safely. Fix them at the source (for example, by which site or "
                             f"system wrote each row), or convert with to_datetime_columns(dayfirst=...) if one "
                             f"order is right for all of them.")
-                else:
+                elif offsets != "mixed":
                     suggest("type", "medium", "Dates stored as text; convert to dates so they sort, filter "
                             "and subtract correctly.", "to_datetime")
             col.stats = {"earliest": dates.min(), "latest": dates.max(), "unparseable": int(dates.isna().sum())}

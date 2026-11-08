@@ -234,7 +234,7 @@ On the data they were fitted on, they give the same results as `fill_missing`, `
 |---|---|
 | `clean_column_names(df, case)` | Tidies column names from exports: removes hidden spaces and line breaks, then `"snake"` (default: `"Patient Age \n(years) "` → `patient_age_years`), `"pascal"` or `"strip"` (spaces only). Names that would clash get `_2`, `_3`, a name that's already clean keeps it, and every rename is reported |
 | `to_boolean(df, columns)` | Yes/No text (any case, also Y/N, True/False) to True/False; blanks and "N/A" become missing. Columns with any other value are left alone |
-| `to_datetime_columns(df, columns, min_share, dayfirst, format)` | Date text (2020-01-31, 01/31/2020, ...) to real dates. Day/month order is worked out per column from the data (13/02/2020 can only be day-first), never value by value; a column mixing both orders is left alone. Number columns are never turned into dates |
+| `to_datetime_columns(df, columns, min_share, dayfirst, format)` | Date text (2020-01-31, 01/31/2020, ...) to real dates. Day/month order is worked out per column from the data (13/02/2020 can only be day-first), never value by value; a column mixing both orders is left alone. Timestamps with different UTC offsets (either side of a daylight-saving change) are read in UTC. Number columns are never turned into dates |
 | `to_category(df, columns, max_unique)` | Repeated text labels (hospital, region) to pandas' category type |
 | `convert_types(df)` | Runs the three type conversions above with safe defaults (categories optional) |
 | `standardize_labels(df, columns, mapping, unmatched)` | One spelling per label: `{"Female": ["f", "woman"], "Male": ["m", "man"]}`, or a list of labels when spellings only differ by case and spaces. Values that match nothing are kept (or made missing, or raise), and always listed in the summary |
@@ -247,7 +247,7 @@ On the data they were fitted on, they give the same results as `fill_missing`, `
 | `encode_categorical(df, columns)` | One-hot or label encoding per column; label codes keep missing values missing |
 | `normalize(df, columns)` | Min-max (0–1) or z-score scaling per column |
 | `add_age_column(df, dob_column, as_of)` | Age in completed years from a birth-date column, as of today or another date column. Unreadable or future birth dates give a missing age, and are counted in the summary |
-| `add_days_between(df, start, end, name)` | Whole calendar days from one date column to another, such as length of stay. An end before its start (a discharge dated before its admission) is left missing and counted, unless `allow_negative=True` |
+| `add_days_between(df, start, end, name)` | Whole calendar days from one date column to another, such as length of stay; dates with a time zone are counted on their local calendar, so daylight saving never adds or loses a day. An end before its start (a discharge dated before its admission) is left missing and counted, unless `allow_negative=True` |
 | `clean(df, ...)` | Runs types → duplicates → missing values → outliers → encoding → scaling in one call. Only duplicate removal is on by default; every other step is opt-in |
 
 ## Profiling: `dstoolkit.profiling`
