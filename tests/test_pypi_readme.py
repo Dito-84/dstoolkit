@@ -3,7 +3,11 @@
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 _path = Path(__file__).resolve().parents[1] / ".github" / "scripts" / "pypi_readme.py"
+if not _path.is_file():   # the script lives only in the repository, not in the source distribution on PyPI
+    pytest.skip("needs the repository's .github folder", allow_module_level=True)
 _spec = importlib.util.spec_from_file_location("pypi_readme", _path)
 assert _spec and _spec.loader
 pypi_readme = importlib.util.module_from_spec(_spec)

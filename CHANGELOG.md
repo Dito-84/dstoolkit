@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.16.1 (unreleased)
+## 0.16.1
 
 Fixes from the November architecture review: dates as they arrive in real exports, a faster `profile()`, and tidier packaging.
 
@@ -9,6 +9,10 @@ Fixes from the November architecture review: dates as they arrive in real export
 - **ISO 8601 timestamps such as `2024-01-31T10:00:00` are recognised as dates** by `to_datetime_columns()`, `convert_types()` and `profile()`. The text is lower-cased before matching, so the `T` arrived as `t` and the column was left as text.
 - **Repeated row labels no longer break cleaning.** After `pd.concat()` without `ignore_index=True`, two rows can share a label. `to_datetime_columns()`, `add_days_between()`, `add_age_column()`, `standardize_labels()`, `associations()` and `profile()` now work by position, and keep the labels. `profile()` drops notes rows at the end of an export by position too, so a data row that shares the notes row's label is no longer dropped with it.
 - **`profile()` is about twice as fast on large data.** Checking whether labels are written more than one way compared every row; it now counts the values once and compares only the distinct spellings, and the checks for numbers stored as text and for ID-like digit strings do the same. 1M rows × 16 columns with charts and a target: 40 s → 21 s on the same machine. The answers are unchanged, which the tests check.
+- **Type checkers see the transformers.** `dst.Scaler`, `dst.CategoryEncoder`, `dst.MissingFiller`, `dst.OutlierCapper` and `dst.DateFeatures` are still imported on first use (so `import dstoolkit` never needs scikit-learn), but mypy and editors used to see them as `object` and report `"object" not callable`. They now see the real classes, and `dir(dst)` and tab completion list them. A new `tests/typing_usage.py`, checked by mypy in CI, keeps it that way.
+- **Clearer `profile()` errors.** Without matplotlib, `profile()` (which draws charts by default) says to install it or pass `charts=False`, instead of a bare `ModuleNotFoundError`. A DataFrame with no rows gets one note saying so, instead of "every value is missing; drop this column" for each column. Column names that look the same in the report and the generated code (`0` and `"0"`) raise an error naming them.
+- **Adjusted p-values:** in `associations()` and `compare()`, one missing p-value no longer turns every adjusted p-value into a blank; it stays blank, and the others are adjusted for the tests that gave one.
+- **Packaging:** a clearer package description on PyPI. The two tests that read files only in the repository (`.github/`) skip themselves when run from the source distribution. Two tests that relied on `caplog` (which depends on the pytest version when messages print) now read the printed output.
 
 ## 0.16.0
 

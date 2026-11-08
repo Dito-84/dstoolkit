@@ -500,11 +500,15 @@ def _mixed_pair(values: pd.Series, groups: pd.Series) -> dict[str, Any] | None:
 
 
 def _benjamini_hochberg(p: np.ndarray) -> np.ndarray:
-    """False-discovery-rate adjusted p-values for many tests at once."""
-    m = len(p)
-    order = np.argsort(p)
+    """False-discovery-rate adjusted p-values for many tests at once. A missing p-value stays
+    missing, and the others are adjusted for the tests that gave one."""
+    p = np.asarray(p, dtype=float)
+    out = np.full(len(p), np.nan)
+    ok = np.flatnonzero(np.isfinite(p))
+    m = len(ok)
+    if m == 0:
+        return out
+    order = ok[np.argsort(p[ok])]
     scaled = p[order] * m / np.arange(1, m + 1)
-    scaled = np.minimum.accumulate(scaled[::-1])[::-1]
-    adjusted = np.empty(m)
-    adjusted[order] = np.minimum(scaled, 1.0)
-    return adjusted
+    out[order] = np.minimum(np.minimum.accumulate(scaled[::-1])[::-1], 1.0)
+    return out

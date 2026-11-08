@@ -27,15 +27,13 @@ def test_clean_column_names(case, expected):
     assert out.iloc[0].tolist() == list(range(6))
 
 
-def test_clean_column_names_reports_and_never_duplicates(caplog):
+def test_clean_column_names_reports_and_never_duplicates(capsys):
     df = pd.DataFrame(columns=["a b", "a_b", "A-B", "ok"])
-    with caplog.at_level("INFO", logger="dstoolkit"):
-        out = dst.clean_column_names(df)
+    out = dst.clean_column_names(df)          # messages print by default; capsys works with every pytest
     assert list(out.columns) == ["a_b_2", "a_b", "a_b_3", "ok"]          # the clean "a_b" keeps its name
-    assert "Renamed 2 column(s)" in caplog.text
-    with caplog.at_level("INFO", logger="dstoolkit"):
-        dst.clean_column_names(out)
-    assert "already clean" in caplog.text
+    assert "Renamed 2 column(s)" in capsys.readouterr().out
+    dst.clean_column_names(out)
+    assert "already clean" in capsys.readouterr().out
     with pytest.raises(ValueError, match="case must be"):
         dst.clean_column_names(df, "camel")
 

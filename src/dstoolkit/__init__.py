@@ -17,6 +17,8 @@ transformers (MissingFiller, OutlierCapper, CategoryEncoder, Scaler, DateFeature
 `dstoolkit.transformers` and need the optional scikit-learn extra.
 """
 
+from typing import TYPE_CHECKING
+
 from . import cleaning, exploration, monitoring, profiling, validation
 from ._messages import get_message_output, set_message_output
 from .cleaning import (
@@ -57,7 +59,10 @@ from .monitoring import compare
 from .profiling import ColumnProfile, Profile, Suggestion, TargetProfile, profile
 from .validation import ColumnRule, Comparison, RuleResult, ValidationError, ValidationReport, validate
 
-__version__ = "0.16.0"
+if TYPE_CHECKING:   # type checkers see the real classes; at run time they're imported on first use (below)
+    from .transformers import CategoryEncoder, DateFeatures, MissingFiller, OutlierCapper, Scaler
+
+__version__ = "0.16.1"
 
 # The transformers need scikit-learn (an optional extra), so they're imported on
 # first use: `dst.Scaler` works when scikit-learn is installed, and `import
@@ -70,6 +75,12 @@ def __getattr__(name: str) -> object:
         from . import transformers
         return getattr(transformers, name)
     raise AttributeError(f"module 'dstoolkit' has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    # tab completion and dir(dst) list the transformers too, without importing scikit-learn
+    return sorted({*globals(), *_TRANSFORMERS})
+
 
 __all__ = ["cleaning", "exploration", "monitoring", "profiling", "validation", "__version__",
            "set_message_output", "get_message_output",

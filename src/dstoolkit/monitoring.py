@@ -239,10 +239,15 @@ def _category_shift(x: pd.Series, y: pd.Series) -> tuple[float, float, list[Any]
 
 
 def _benjamini_hochberg(p: np.ndarray) -> np.ndarray:
-    n = len(p)
-    order = np.argsort(p)
-    ranked = p[order] * n / np.arange(1, n + 1)
-    adjusted = np.minimum.accumulate(ranked[::-1])[::-1].clip(max=1)
-    out = np.empty(n)
-    out[order] = adjusted
+    """False-discovery-rate adjusted p-values for many tests at once. A missing p-value stays
+    missing, and the others are adjusted for the tests that gave one."""
+    p = np.asarray(p, dtype=float)
+    out = np.full(len(p), np.nan)
+    ok = np.flatnonzero(np.isfinite(p))
+    m = len(ok)
+    if m == 0:
+        return out
+    order = ok[np.argsort(p[ok])]
+    scaled = p[order] * m / np.arange(1, m + 1)
+    out[order] = np.minimum(np.minimum.accumulate(scaled[::-1])[::-1], 1.0)
     return out

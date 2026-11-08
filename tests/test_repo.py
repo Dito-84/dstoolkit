@@ -4,7 +4,11 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
+# These check files that live only in the repository, not in the source distribution on PyPI
+pytestmark = pytest.mark.skipif(not (ROOT / ".github").is_dir(), reason="needs the repository's .github folder")
 
 
 def _ci_check_names() -> set[str]:
