@@ -70,7 +70,12 @@ __all__ = [
 ]
 
 # Dates written as text: 2020-01-31, 2020/1/31, 01/31/2020, 31-1-20, optionally with a time
-DATE_PATTERN = re.compile(r"^\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})([ T]\d{1,2}:\d{2}.*)?\s*$")
+# (case-insensitive: the text is lower-cased before matching, so ISO 8601's "T" arrives as "t")
+DATE_PATTERN = re.compile(r"^\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})([ T]\d{1,2}:\d{2}.*)?\s*$",
+                          re.IGNORECASE)
+# A UTC offset or "Z" at the end of a timestamp: 10:00:00-05:00, 10:00+0530, 10:00:00Z
+UTC_OFFSET = re.compile(r"\d:\d{2}(?::\d{2}(?:\.\d+)?)?\s*(z|[+-]\d{2}:?\d{2})$", re.IGNORECASE)
+OffsetKind = Literal["none", "one", "many", "mixed"]
 
 # Words read as True / False. 1/0 and t/f only count when you name the column,
 # because a text column of 0s and 1s is often a count or a code, not a yes/no answer.
@@ -190,7 +195,7 @@ def _date_order(text: pd.Series) -> tuple[DateOrder, list[str]]:
     only a day written month-first (02/13/2020). Returns the order and, for a
     column that has both, one example of each.
     """
-    present = text.dropna()
+    present = text.dropna().reset_index(drop=True)      # by position, so repeated row labels are fine
     parts = present.str.extract(NUMERIC_DATE).dropna()
     if parts.empty:
         return "none", []
@@ -198,12 +203,29 @@ def _date_order(text: pd.Series) -> tuple[DateOrder, list[str]]:
     day_first, month_first = first > 12, second > 12
     if day_first.any() and month_first.any():
         first_example, second_example = day_first[day_first].index[0], month_first[month_first].index[0]
-        return "conflict", [str(present.loc[first_example]), str(present.loc[second_example])]
+        return "conflict", [str(present.iloc[first_example]), str(present.iloc[second_example])]
     if day_first.any():
         return "day_first", []
     if month_first.any():
         return "month_first", []
     return "ambiguous", []
+
+
+def _offset_kind(text: pd.Series) -> tuple[OffsetKind, list[str]]:
+    """Whether date text carries UTC offsets: "none", "one" (a single offset), "many"
+    (different offsets, such as -05:00 and -04:00 either side of a daylight-saving change),
+    or "mixed" (some values have an offset and some don't). For "mixed", one example of each."""
+    present = text.dropna()
+    if present.empty:
+        return "none", []
+    found = present.str.extract(UTC_OFFSET)[0]
+    has = found.notna()
+    if not has.any():
+        return "none", []
+    if not has.all():
+        return "mixed", [str(present[has.to_numpy()].iloc[0]), str(present[~has.to_numpy()].iloc[0])]
+    offsets = found.str.lower().str.replace(":", "", regex=False).replace({"z": "+0000"})
+    return ("one" if offsets.nunique() == 1 else "many"), []
 
 
 def _parse_dates(text: pd.Series, dayfirst: bool, format: str | None = None) -> pd.Series:
@@ -213,24 +235,31 @@ def _parse_dates(text: pd.Series, dayfirst: bool, format: str | None = None) -> 
     (pandas would read 2020-01-02 as 1 February when dayfirst=True). Other dates
     are read in the given order, and a value that contradicts it (13/02/2020 read
     month-first) becomes missing instead of being quietly read the other way round.
+    Timestamps with different UTC offsets are read as UTC (the same instants, one time
+    zone); callers check _offset_kind() first and never pass a "mixed" column.
+    Works by position, so repeated row labels are fine; the result keeps the labels.
     """
+    labels = text.index
+    text = text.reset_index(drop=True)
+    utc = _offset_kind(text)[0] == "many"
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
         if format:
-            return pd.to_datetime(text, errors="coerce", format=format)
+            parsed = pd.to_datetime(text, errors="coerce", format=format, utc=utc)
+            return parsed.set_axis(labels)
         year_first = text.str.match(YEAR_FIRST).fillna(False).astype(bool)
         pieces = []
         if year_first.any():
-            pieces.append(pd.to_datetime(text[year_first], errors="coerce", format="mixed"))
+            pieces.append(pd.to_datetime(text[year_first], errors="coerce", format="mixed", utc=utc))
         rest = text[~year_first]
         if len(rest):
-            parsed = pd.to_datetime(rest, errors="coerce", format="mixed", dayfirst=dayfirst)
+            parsed = pd.to_datetime(rest, errors="coerce", format="mixed", dayfirst=dayfirst, utc=utc)
             parts = rest.str.extract(NUMERIC_DATE)
             must_be_day = pd.to_numeric(parts[1 if dayfirst else 0], errors="coerce") > 12
             pieces.append(parsed.mask(must_be_day.fillna(False).astype(bool)))
     if not pieces:
-        return pd.to_datetime(text, errors="coerce")
-    return pd.concat(pieces).reindex(text.index)
+        return pd.to_datetime(text, errors="coerce", utc=utc).set_axis(labels)
+    return pd.concat(pieces).sort_index().set_axis(labels)
 
 
 def to_datetime_columns(df: pd.DataFrame, columns: Sequence[str] | None = None, min_share: float = 0.95,
@@ -251,6 +280,9 @@ def to_datetime_columns(df: pd.DataFrame, columns: Sequence[str] | None = None, 
     format: an exact format such as "%Y%m%d", for dates the default reading misses
 
     Dates that start with the year (2020-01-31) are always read year-month-day.
+    Timestamps with different UTC offsets (-05:00 and -04:00 either side of a
+    daylight-saving change) are read in UTC; a column where some values have an
+    offset and some don't is left alone (or raises, when you name it).
     Values that can't be read as dates become missing; the summary says how many.
     """
     if not 0 < min_share <= 1:
@@ -258,7 +290,7 @@ def to_datetime_columns(df: pd.DataFrame, columns: Sequence[str] | None = None, 
     targets, explicit = _columns_to_check(df, columns)
 
     result = df.copy()
-    converted, notes, assumed = [], [], []
+    converted, notes, assumed, utc_read = [], [], [], []
     for col in targets:
         series = result[col]
         if pd.api.types.is_datetime64_any_dtype(series):
@@ -274,6 +306,15 @@ def to_datetime_columns(df: pd.DataFrame, columns: Sequence[str] | None = None, 
         if present.empty:
             continue
         if not explicit and present.str.match(DATE_PATTERN).mean() < min_share:
+            continue
+        offsets, offset_examples = _offset_kind(text)
+        if offsets == "mixed":
+            problem = (f"mixes dates with and without a UTC offset (e.g. {offset_examples[0]!r} and "
+                       f"{offset_examples[1]!r}), so the ones without can't be placed in time")
+            if explicit:
+                raise ValueError(f"{col!r} {problem}. Fix them at the source, or pass format= to read one style "
+                                 f"and leave the rest missing.")
+            notes.append(f"Left {col!r} as text: it {problem}")
             continue
         order, examples = _date_order(text) if not format else ("none", [])
         if order == "conflict" and dayfirst is None:
@@ -292,6 +333,8 @@ def to_datetime_columns(df: pd.DataFrame, columns: Sequence[str] | None = None, 
             continue
         result[col] = parsed
         converted.append(col)
+        if offsets == "many":
+            utc_read.append(col)
         if failed:
             notes.append(f"{failed} value(s) in {col!r} couldn't be read as dates and are now missing")
     message = (f"Converted to dates: {', '.join(map(str, converted))}." if converted
@@ -299,6 +342,10 @@ def to_datetime_columns(df: pd.DataFrame, columns: Sequence[str] | None = None, 
     if assumed := [c for c in assumed if c in converted]:
         notes.append(f"Read {', '.join(map(repr, assumed))} as month/day/year because no day was above 12; "
                      f"pass dayfirst=True if they are day/month/year")
+    if utc_read:
+        notes.append(f"Read {', '.join(map(repr, utc_read))} in UTC: the timestamps carry different UTC offsets "
+                     f"(e.g. either side of a daylight-saving change), so one time zone keeps them comparable; "
+                     f"use .dt.tz_convert(...) for local times")
     _say(verbose, " ".join([message] + [n + "." for n in notes]))
     return result
 
@@ -402,7 +449,8 @@ def standardize_labels(df: pd.DataFrame, columns: str | Sequence[str],
     result = df.copy()
     notes = []
     for col in names:
-        series = result[col]
+        labels = result.index
+        series = result[col].reset_index(drop=True)    # by position, so repeated row labels are fine
         if not (_is_text(series) or isinstance(series.dtype, pd.CategoricalDtype)):
             raise TypeError(f"{col!r} holds {series.dtype} values, not text labels; for 1/0 or "
                             f"yes/no answers use to_boolean()")
@@ -423,7 +471,7 @@ def standardize_labels(df: pd.DataFrame, columns: str | Sequence[str],
             values = values.astype("category")
         elif pd.api.types.is_string_dtype(series.dtype) and not pd.api.types.is_object_dtype(series.dtype):
             values = values.astype(series.dtype)
-        result[col] = values
+        result[col] = values.set_axis(labels)
         note = f"{col!r}: {relabeled} value(s) relabeled"
         if len(unknown):
             what = "made missing" if unmatched == "missing" else "left as they were"
@@ -906,8 +954,10 @@ def add_days_between(df: pd.DataFrame, start: str, end: str, name: str | None = 
                     before its admission) is a data error, so it's left missing
                     and counted. Pass True when negative gaps are meaningful.
 
-    Dates written as text are read the same way as to_datetime_columns(): day
-    and month are never swapped, and a column mixing both orders raises an error.
+    Dates with a time zone are counted on their local calendar, so a
+    daylight-saving change never adds or loses a day. Dates written as text are
+    read the same way as to_datetime_columns(): day and month are never swapped,
+    and a column mixing both orders raises an error.
     Blank or unreadable dates give a missing result; the summary says how many
     couldn't be read. For a model, use DateFeatures(intervals=...) instead, which
     does the same inside a scikit-learn Pipeline.
@@ -919,7 +969,7 @@ def add_days_between(df: pd.DataFrame, start: str, end: str, name: str | None = 
 
     first, first_unread = _read_dates(df[start], start)
     last, last_unread = _read_dates(df[end], end)
-    days = (last.dt.normalize() - first.dt.normalize()).dt.days.astype("Int64")
+    days = _calendar_days(first, last)
     backwards = 0 if allow_negative else int((days < 0).sum())
     if backwards:
         days = days.mask(days < 0)
@@ -942,6 +992,19 @@ def add_days_between(df: pd.DataFrame, start: str, end: str, name: str | None = 
     return result
 
 
+def _local_dates(dates: pd.Series) -> pd.Series:
+    """Midnight of each date on its own calendar: dates with a time zone keep their local wall-clock
+    date, so a daylight-saving change (a 23- or 25-hour day) can't shift a count of days."""
+    if isinstance(dates.dtype, pd.DatetimeTZDtype):
+        dates = dates.dt.tz_localize(None)
+    return dates.dt.normalize()
+
+
+def _calendar_days(start: pd.Series, end: pd.Series) -> pd.Series:
+    """Whole calendar days from start to end (same day = 0), as nullable integers."""
+    return (_local_dates(end) - _local_dates(start)).dt.days.astype("Int64")
+
+
 def _read_dates(series: pd.Series, name: Any) -> tuple[pd.Series, int]:
     """(dates, how many non-blank values couldn't be read) for a date or date-text column."""
     if pd.api.types.is_datetime64_any_dtype(series):
@@ -949,6 +1012,10 @@ def _read_dates(series: pd.Series, name: Any) -> tuple[pd.Series, int]:
     if pd.api.types.is_numeric_dtype(series) or pd.api.types.is_bool_dtype(series):
         raise TypeError(f"{name!r} holds numbers, not dates; converting would give 1970-01-01")
     text = _normalized(series)
+    offsets, offset_examples = _offset_kind(text)
+    if offsets == "mixed":
+        raise ValueError(f"{name!r} mixes dates with and without a UTC offset (e.g. {offset_examples[0]!r} and "
+                         f"{offset_examples[1]!r}); fix them at the source first")
     order, examples = _date_order(text)
     if order == "conflict":
         raise ValueError(f"{name!r} mixes day-first and month-first dates (e.g. {examples[0]!r} and "
