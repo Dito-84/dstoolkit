@@ -103,7 +103,7 @@ Dates are checked for leaks too: each date, and the days between each pair of da
 
 ### Dataset size
 
-Timed with 16 columns (numbers, categories and an ID), charts and a target: about 3 seconds for 10,000 rows, 6 seconds for 100,000, and 50 seconds for a million. For large data, `profile(df, sample=20_000)` profiles a fixed random 20,000 rows (about 5 seconds at a million rows); the row, duplicate and missing counts and any validation still use every row, and the report says what was sampled. The related-columns section is skipped above 30 columns.
+Timed with 16 columns (numbers, categories and an ID), charts and a target: about 2 seconds for 10,000 rows, 3 seconds for 100,000, and 20 seconds for a million. For large data, `profile(df, sample=20_000)` profiles a fixed random 20,000 rows (about 5 seconds at a million rows); the row, duplicate and missing counts and any validation still use every row, and the report says what was sampled. The related-columns section is skipped above 30 columns.
 
 ## Clean in one call
 
