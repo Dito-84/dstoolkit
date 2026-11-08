@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import re
 import warnings
+from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, Literal
 
@@ -149,7 +150,7 @@ def _is_yes_no(series: pd.Series) -> bool:
     """True when every non-blank value is a yes/no word (yes/no, y/n, true/false, any case)."""
     if not _is_text(series):
         return False
-    present = _normalized(series).dropna()
+    present = _normalized(pd.Series(series.dropna().unique(), dtype=object)).dropna()   # each value once
     return bool(len(present) and present.isin(TRUE_WORDS | FALSE_WORDS).all())
 
 
@@ -228,7 +229,8 @@ def _offset_kind(text: pd.Series) -> tuple[OffsetKind, list[str]]:
     return ("one" if offsets.nunique() == 1 else "many"), []
 
 
-def _parse_dates(text: pd.Series, dayfirst: bool, format: str | None = None) -> pd.Series:
+def _parse_dates(text: pd.Series, dayfirst: bool, format: str | None = None,
+                 offsets: OffsetKind | None = None) -> pd.Series:
     """Parse normalized date text into dates, never swapping day and month.
 
     Dates that start with a four-digit year are always read year-month-day
@@ -236,12 +238,13 @@ def _parse_dates(text: pd.Series, dayfirst: bool, format: str | None = None) -> 
     are read in the given order, and a value that contradicts it (13/02/2020 read
     month-first) becomes missing instead of being quietly read the other way round.
     Timestamps with different UTC offsets are read as UTC (the same instants, one time
-    zone); callers check _offset_kind() first and never pass a "mixed" column.
+    zone); callers check _offset_kind() first (and may pass its answer as `offsets`)
+    and never pass a "mixed" column.
     Works by position, so repeated row labels are fine; the result keeps the labels.
     """
     labels = text.index
     text = text.reset_index(drop=True)
-    utc = _offset_kind(text)[0] == "many"
+    utc = (offsets if offsets is not None else _offset_kind(text)[0]) == "many"
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
         if format:
@@ -327,7 +330,7 @@ def to_datetime_columns(df: pd.DataFrame, columns: Sequence[str] | None = None, 
             continue
         if dayfirst is None and order == "ambiguous":
             assumed.append(col)
-        parsed = _parse_dates(text, order == "day_first" if dayfirst is None else dayfirst, format)
+        parsed = _parse_dates(text, order == "day_first" if dayfirst is None else dayfirst, format, offsets)
         failed = int(parsed[text.notna()].isna().sum())
         if not explicit and 1 - failed / len(present) < min_share:
             continue
@@ -408,15 +411,18 @@ def _label_key(value: Any) -> str:
 def _standard_spellings(values: pd.Series) -> tuple[list[str], int]:
     """(one spelling per label, how many labels are written more than one way).
 
-    The spelling kept for each label is its most common one.
+    The spelling kept for each label is its most common one. Counts each value
+    once, then compares only the distinct spellings, so a column with millions of
+    rows but a few thousand distinct values stays fast.
     """
-    present = values.dropna().astype(str)
+    counts = values.dropna().astype(str).value_counts()     # most common first
     spellings: dict[str, Any] = {}
-    variants = 0
-    for _, group in present.groupby(present.map(_label_key), sort=True):
-        counts = group.value_counts()
-        spellings[_label_key(counts.index[0])] = counts.index[0]
-        variants += len(counts) > 1
+    seen: Counter[str] = Counter()
+    for spelling in counts.index:
+        key = _label_key(spelling)
+        seen[key] += 1
+        spellings.setdefault(key, spelling)
+    variants = sum(n > 1 for n in seen.values())
     return sorted(spellings.values(), key=str), variants
 
 
@@ -1020,7 +1026,7 @@ def _read_dates(series: pd.Series, name: Any) -> tuple[pd.Series, int]:
     if order == "conflict":
         raise ValueError(f"{name!r} mixes day-first and month-first dates (e.g. {examples[0]!r} and "
                          f"{examples[1]!r}); convert it with to_datetime_columns(dayfirst=...) first")
-    dates = _parse_dates(text, dayfirst=order == "day_first")
+    dates = _parse_dates(text, dayfirst=order == "day_first", offsets=offsets)
     return dates, int((text.notna() & dates.isna()).sum())
 
 

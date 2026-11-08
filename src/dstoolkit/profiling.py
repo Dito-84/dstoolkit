@@ -1025,7 +1025,7 @@ def _looks_like_identifier(series: pd.Series) -> bool:
     """Digit strings that are really labels (IDs, ZIP codes): converting them to numbers loses leading zeros."""
     if ID_NAME_HINT.search(str(series.name or "")):
         return True
-    text = series.dropna().astype(str).str.strip()
+    text = pd.Series(series.dropna().astype(str).unique(), dtype=object).str.strip()   # each value once
     return bool(text.str.match(r"^0\d").any())
 
 
@@ -1033,8 +1033,10 @@ def _numbers_stored_as_text(series: pd.Series) -> bool:
     values = series.dropna()
     if values.empty or pd.api.types.is_numeric_dtype(series) or _looks_like_identifier(series):
         return False
-    converted = pd.to_numeric(values.astype(str).str.replace(",", "", regex=False).str.strip(), errors="coerce")
-    return bool(converted.notna().mean() >= 0.95)
+    counts = values.astype(str).value_counts()              # convert each distinct value once
+    text = pd.Series(counts.index, dtype=object).str.replace(",", "", regex=False).str.strip()
+    converted = pd.to_numeric(text, errors="coerce").notna().to_numpy()
+    return bool(counts.to_numpy()[converted].sum() >= 0.95 * counts.sum())
 
 
 def _profile_column(series: pd.Series, name: str, charts: bool, max_categories: int,
@@ -1119,7 +1121,7 @@ def _profile_column(series: pd.Series, name: str, charts: bool, max_categories: 
                             f"placed in time. Fix them at the source (add the offset or time zone the system "
                             f"used), then convert with to_datetime_columns().")
                 else:
-                    dates = _parse_dates(text, dayfirst=order == "day_first")
+                    dates = _parse_dates(text, dayfirst=order == "day_first", offsets=offsets)
                 if order == "conflict" and offsets != "mixed":
                     dates = dates.where(dates.isna())  # can't be read reliably, so no earliest/latest
                     only_day, only_month, either = _date_order_counts(text)
