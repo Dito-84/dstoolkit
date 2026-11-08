@@ -77,15 +77,15 @@ def test_more_blanks(share, status):
     assert r["blanks_before"] == 0 and r["blanks_after"] == pytest.approx(share, abs=0.002)
 
 
-def test_type_change_added_and_removed_columns(caplog):
+def test_type_change_added_and_removed_columns(capsys):
     before, after = frame(seed=0), frame(seed=1)
     after["age"] = after["age"].astype(str)                               # numbers arriving as text
     after = after.drop(columns="visits").assign(bmi=25.0)
-    with caplog.at_level("INFO", logger="dstoolkit"):
-        result = dst.compare(before, after)
+    result = dst.compare(before, after)      # messages print by default; capsys works with every pytest
     assert row(result, "age")["status"] == "major" and "type changed: number →" in row(result, "age")["issues"]
     assert row(result, "visits")["status"] == "removed" and row(result, "bmi")["status"] == "added"
-    assert "removed: visits" in caplog.text and "added: bmi" in caplog.text
+    printed = capsys.readouterr().out
+    assert "removed: visits" in printed and "added: bmi" in printed
 
 
 def test_dates_and_identifiers_are_not_compared_but_codes_are():

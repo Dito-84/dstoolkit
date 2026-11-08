@@ -670,6 +670,17 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
     if df.columns.duplicated().any():
         dupes = df.columns[df.columns.duplicated()].tolist()
         raise ValueError(f"Column name(s) {dupes} appear more than once; rename duplicates first")
+    as_text = pd.Index([str(c) for c in df.columns])
+    if as_text.duplicated().any():
+        clash = [c for c in df.columns if str(c) in set(as_text[as_text.duplicated()])]
+        raise ValueError(f"Column names {clash} look the same in the report and the generated code "
+                         f"(e.g. 0 and '0'); rename one first, e.g. df.columns = df.columns.map(str)")
+    if charts:
+        try:
+            import matplotlib  # noqa: F401
+        except ImportError:
+            raise ImportError("profile() draws its charts with matplotlib, which isn't installed; "
+                              "install it, or pass charts=False") from None
 
     if target is not None and target not in df.columns:
         raise KeyError(f"target {target!r} is not a column")
@@ -705,6 +716,9 @@ def profile(df: pd.DataFrame, title: str = "Dataset profile", charts: bool = Tru
 
     columns: list[ColumnProfile] = []
     suggestions: list[Suggestion] = []
+    if len(original) == 0:
+        suggestions.append(Suggestion(None, "note", "high", "The DataFrame has no rows, so there is nothing to "
+                                      "profile; check the file or the filter that produced it."))
     duplicates = int(full.duplicated().sum())
     if duplicates:
         suggestions.append(Suggestion(None, "duplicates", "high",
@@ -1055,7 +1069,7 @@ def _profile_column(series: pd.Series, name: str, charts: bool, max_categories: 
         out.append(Suggestion(name, step, severity, message, action, options))
 
     if kind == "empty":
-        if not missing_expected:
+        if not missing_expected and len(series):      # an empty DataFrame gets one note instead
             suggest("drop", "high", "Every value is missing; drop this column.", "drop")
         return col, out
 
