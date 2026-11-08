@@ -53,6 +53,8 @@ from .cleaning import (
     OutlierMethod,
     Scaling,
     _bounds,
+    _calendar_days,
+    _category_order,
     _fill_numeric,
     _position,
 )
@@ -60,6 +62,7 @@ from .cleaning import (
 __all__ = ["MissingFiller", "OutlierCapper", "CategoryEncoder", "Scaler", "DateFeatures"]
 
 TransformerNumericFill = Literal["mean", "median", "zero"]
+IntervalUnit = Literal["days", "calendar_days"]
 DatePart = Literal["year", "month", "day", "dayofweek", "dayofyear", "quarter", "hour"]
 DATE_PARTS = ("year", "month", "day", "dayofweek", "dayofyear", "quarter", "hour")
 _DT_ATTR = {"dayofweek": "day_of_week", "dayofyear": "day_of_year"}   # pandas' current names
@@ -252,8 +255,9 @@ class CategoryEncoder(_FrameTransformer):
     columns: {column: "onehot" or "label"}, or a list of columns to one-hot encode
       - "onehot" adds a 0/1 column per training category (sex_female, sex_male).
         Missing values are 0 in every column.
-      - "label" adds column_label with integer codes in alphabetical order of the
-        training categories; missing values stay missing.
+      - "label" adds column_label with integer codes in order of the training
+        categories: numeric order when they're all numbers (1, 2, 10), otherwise
+        alphabetical; missing values stay missing.
     handle_unknown: what to do with a category that wasn't in the training data:
                     "ignore" (default: 0 in every one-hot column, missing label)
                     or "error"
@@ -304,8 +308,8 @@ class CategoryEncoder(_FrameTransformer):
         for col in methods:
             counts = X[col].dropna().value_counts()
             needed = 0 if m is None else (m * counts.sum() if isinstance(m, float) else m)
-            rare = sorted(counts[counts < needed].index, key=str)
-            frequent = sorted((c for c in counts.index if c not in rare and c != self.other_label), key=str)
+            rare = _category_order(counts[counts < needed].index)
+            frequent = _category_order([c for c in counts.index if c not in rare and c != self.other_label])
             self.rare_[col] = rare
             self.categories_[col] = frequent + ([self.other_label] if rare or self.other_label in counts.index else [])
         return self
@@ -414,6 +418,12 @@ class DateFeatures(_FrameTransformer):
     intervals: {new column: (start column, end column)}: the days from start to
                end, e.g. {"stay_days": ("admitted", "discharged")}. Durations
                often matter more than the dates themselves.
+    interval_unit: how intervals are counted. "days" (default): elapsed time in
+                   days, with fractions (23:00 to 01:00 the next day is 0.083).
+                   "calendar_days": whole calendar days, the same as
+                   add_days_between() (that example is 1, and a same-day
+                   discharge 0); dates with a time zone are counted on their
+                   local calendar.
     ages: {new column: (birth date column, date column)}: age in completed
           years on the second date, e.g. {"age_at_admission": ("date_of_birth",
           "admitted")}. A birth date after the second date gives a missing age,
@@ -431,12 +441,14 @@ class DateFeatures(_FrameTransformer):
     def __init__(self, columns: Sequence[str] | None = None,
                  parts: Sequence[DatePart] = ("year", "month", "dayofweek"),
                  intervals: Mapping[str, tuple[str, str]] | None = None, drop_original: bool = True,
-                 ages: Mapping[str, tuple[str, str]] | None = None) -> None:
+                 ages: Mapping[str, tuple[str, str]] | None = None,
+                 interval_unit: IntervalUnit = "days") -> None:
         self.columns = columns
         self.parts = parts
         self.intervals = intervals
         self.drop_original = drop_original
         self.ages = ages
+        self.interval_unit = interval_unit
 
     def _pairs(self) -> dict[str, tuple[str, str]]:
         return {**dict(self.intervals or {}), **dict(self.ages or {})}
@@ -445,6 +457,8 @@ class DateFeatures(_FrameTransformer):
         bad = [p for p in self.parts if p not in DATE_PARTS]
         if isinstance(self.parts, str) or bad:
             raise ValueError(f"parts must be a list drawn from {DATE_PARTS}")
+        if self.interval_unit not in ("days", "calendar_days"):
+            raise ValueError(f'interval_unit must be "days" or "calendar_days", got {self.interval_unit!r}')
         X = self._start_fit(X)
         if self.columns is None:
             dates = [c for c in X.columns if pd.api.types.is_datetime64_any_dtype(X[c])]
@@ -480,7 +494,11 @@ class DateFeatures(_FrameTransformer):
                 piece = getattr(values.dt, _DT_ATTR.get(part, part)).astype("float")
                 result.insert(at + offset, f"{col}_{part}", piece.to_numpy())
         for name, (start, end) in (self.intervals or {}).items():
-            result[name] = ((pd.to_datetime(X[end]) - pd.to_datetime(X[start])).dt.total_seconds() / 86400).to_numpy()
+            first, last = pd.to_datetime(X[start]), pd.to_datetime(X[end])
+            if self.interval_unit == "calendar_days":
+                result[name] = _calendar_days(first, last).astype("float").to_numpy()
+            else:
+                result[name] = ((last - first).dt.total_seconds() / 86400).to_numpy()
         for name, (born, on) in (self.ages or {}).items():
             result[name] = _completed_years(pd.to_datetime(X[born]), pd.to_datetime(X[on])).to_numpy()
         if self.drop_original:

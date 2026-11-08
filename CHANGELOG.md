@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.17.0 (unreleased)
+
+Changes in behaviour, from the November architecture review. Upgrade notes are marked **Changed**.
+
+- **Changed: `compare()` no longer reports a new batch of IDs as drift.** Whole numbers that label rows (named like an ID, such as `patient_id`, `mrn` or `PatientID`, or almost every value distinct and numbered in a narrow range, such as 1001, 1002, ...) now get only the type and blank checks, like text identifiers. Before, every new batch of patient numbers was "major" (PSI 8.3 in the tests), so an alert on major drift fired on every upload. New `identifiers=[...]` names them yourself and turns the automatic check off (`[]` compares every number column).
+- **Changed: `profile()` gives numeric IDs no fill, outlier or log advice.** A `patient_id` stored as numbers with a few blanks used to get "fill with the mean", the very guess dstoolkit is meant never to make. It now gets a note to leave it out of models (or pass it as `group=`), and `pipeline()` leaves it out under "identifiers or free text". `ColumnProfile.identifier` says which columns these are. Costs or other measurements in whole units aren't affected: they're spread over a wide range.
+- **Changed: label codes follow numeric order for numbers.** `encode_categorical(..., "label")` and `CategoryEncoder` gave grades 1, 2, 10 the codes 0, 2, 1, because they sorted the numbers as text; now 0, 1, 2. Text categories stay alphabetical.
+- **Changed: PSI for brand-new or vanished values is set by the data.** `compare()` used to stand in 0.0001 for an empty bin, so a new category's PSI (9.48 for "ER" in the hospital demo) mostly reflected that constant. Half a row is now added to every bin (Jeffreys smoothing), so the number depends on how many rows there are: 8.49 for "ER", 6.60 for the HbA1c unit change. No status in the demo or the tests changed.
+- **New: `DateFeatures(..., interval_unit="calendar_days")`** counts intervals in whole calendar days, the same as `add_days_between()` (dates with a time zone on their local calendar). The default, `"days"`, still gives elapsed days with fractions: 23:00 to 01:00 the next day is 0.083, not 1. `add_days_between()`'s docstring said `DateFeatures(intervals=...)` "does the same", which it didn't.
+- `compare(columns=...)` accepts any column labels, not only text (the type hint said `str`).
+
 ## 0.16.1
 
 Fixes from the November architecture review: dates as they arrive in real exports, a faster `profile()`, and tidier packaging.

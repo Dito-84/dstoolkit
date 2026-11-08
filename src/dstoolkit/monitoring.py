@@ -24,20 +24,21 @@ reported too, but doesn't set the status: with thousands of rows, tiny,
 harmless shifts are "significant".
 
 Dates are expected to move forward, so their distribution isn't compared;
-identifiers and free text (many values, mostly distinct) only get the type
-and blank checks. Nothing is changed in either DataFrame.
+identifiers and free text (text with many values, mostly distinct, and whole
+numbers named like an ID or almost all distinct) only get the type and blank
+checks. Nothing is changed in either DataFrame.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
 from ._messages import say
-from .cleaning import DATE_PATTERN
+from .cleaning import DATE_PATTERN, _is_numeric_identifier
 
 __all__ = ["compare"]
 
@@ -50,15 +51,16 @@ NEW_CATEGORIES_MAJOR = 0.05
 RARE_SHARE = 0.01           # categories rarer than this in the reference share one bin, so the PSI isn't noise
 ID_SHARE = 0.2              # text with more distinct values than max_categories AND this share of rows: an identifier
 FEW_VALUES = 10             # numbers with this many distinct values or fewer are compared as categories
-_EPS = 1e-4                 # stands in for an empty bin, so the PSI stays finite
+SMOOTHING = 0.5             # added to every bin's count, so an empty bin gives a finite PSI set by the data
 
 COMPARE_COLUMNS = ["column", "status", "kind", "shift_psi", "p_adjusted", "blanks_before", "blanks_after",
                    "new_categories", "new_category_share", "issues", "rows_before", "rows_after"]
 _RANK = {"major": 0, "added": 0, "removed": 0, "moderate": 1, "stable": 2}
 
 
-def compare(reference: pd.DataFrame, current: pd.DataFrame, columns: Sequence[str] | None = None,
-            max_categories: int = 50, verbose: bool = True) -> pd.DataFrame:
+def compare(reference: pd.DataFrame, current: pd.DataFrame, columns: Sequence[Hashable] | None = None,
+            max_categories: int = 50, identifiers: Sequence[Hashable] | None = None,
+            verbose: bool = True) -> pd.DataFrame:
     """Compare new data with the data a model was built on, column by column.
 
     reference: the data the model learned from (e.g. the training data)
@@ -69,6 +71,15 @@ def compare(reference: pd.DataFrame, current: pd.DataFrame, columns: Sequence[st
                     identifiers or free text (patient IDs, names, notes): only
                     their type and blanks are compared. Codes with many values
                     that repeat (diagnosis codes) are still compared.
+    identifiers: columns that label rows rather than measure something, so their
+                 distribution isn't compared (only type and blanks). Default:
+                 found automatically: the text columns above, and whole-number
+                 columns named like an ID (patient_id, mrn, PatientID) or with
+                 almost every value distinct in a narrow range (1001, 1002, ...). A new batch of IDs always looks
+                 "shifted", so comparing them would raise an alarm every time.
+                 A list names the columns to treat as identifiers and turns the
+                 automatic check for whole numbers off ([] compares every number
+                 column); text identifiers are still found by max_categories.
 
     Returns one row per column, the biggest changes first: status ("major",
     "moderate", "stable", "added" or "removed"), the kind of data, the shift
@@ -87,6 +98,12 @@ def compare(reference: pd.DataFrame, current: pd.DataFrame, columns: Sequence[st
     unknown = [c for c in names if c not in reference.columns and c not in current.columns]
     if unknown:
         raise KeyError(f"Columns not found in either DataFrame: {unknown}")
+    if isinstance(identifiers, str):
+        raise TypeError("identifiers must be a list of column names, not one string")
+    chosen = None if identifiers is None else list(identifiers)
+    missing_ids = [c for c in (chosen or []) if c not in reference.columns and c not in current.columns]
+    if missing_ids:
+        raise KeyError(f"identifiers names columns that aren't in either DataFrame: {missing_ids}")
 
     rows: list[dict[str, Any]] = []
     for col in names:
@@ -97,7 +114,8 @@ def compare(reference: pd.DataFrame, current: pd.DataFrame, columns: Sequence[st
             rows.append(_row(col, "added", _kind(current[col], max_categories), len(reference), len(current),
                              issues=["not in the reference data"]))
         else:
-            rows.append(_compare_column(col, reference[col], current[col], max_categories))
+            rows.append(_compare_column(col, reference[col], current[col], max_categories,
+                                        None if chosen is None else col in chosen))
 
     result = pd.DataFrame(rows, columns=[*COMPARE_COLUMNS, "p_value"])
     tested = result["p_value"].notna()
@@ -144,8 +162,13 @@ def _kind(series: pd.Series, max_categories: int) -> str:
     return "category"
 
 
-def _compare_column(col: Any, before: pd.Series, after: pd.Series, max_categories: int) -> dict[str, Any]:
+def _compare_column(col: Any, before: pd.Series, after: pd.Series, max_categories: int,
+                    identifier: bool | None = None) -> dict[str, Any]:
     kind_before, kind_after = _kind(before, max_categories), _kind(after, max_categories)
+    # Whole-number IDs: found automatically from the reference (identifier=None), or as the caller chose
+    is_id = _is_numeric_identifier(before, col) if identifier is None else identifier
+    if is_id and kind_before == kind_after:
+        kind_before = kind_after = "identifier or free text"
     blanks_before = float(before.isna().mean()) if len(before) else 0.0
     blanks_after = float(after.isna().mean()) if len(after) else 0.0
     issues: list[str] = []
@@ -204,8 +227,14 @@ def _compare_column(col: Any, before: pd.Series, after: pd.Series, max_categorie
 
 
 def _psi(expected: np.ndarray, actual: np.ndarray) -> float:
-    e = np.clip(expected, _EPS, None)
-    a = np.clip(actual, _EPS, None)
+    """Population stability index from the counts per bin.
+
+    Half a row is added to every bin (Jeffreys smoothing), so a bin that's empty on one side
+    (a brand-new code, a category that vanished) gives a finite PSI that depends on how many
+    rows there are, not on an arbitrary stand-in for zero.
+    """
+    e = (np.asarray(expected, dtype=float) + SMOOTHING) / (np.sum(expected) + SMOOTHING * len(expected))
+    a = (np.asarray(actual, dtype=float) + SMOOTHING) / (np.sum(actual) + SMOOTHING * len(actual))
     return float(np.sum((a - e) * np.log(a / e)))
 
 
@@ -213,8 +242,7 @@ def _numeric_shift(x: pd.Series, y: pd.Series) -> tuple[float, float]:
     from scipy import stats
     edges = np.unique(np.quantile(x, np.linspace(0, 1, 11)))
     edges[0], edges[-1] = -np.inf, np.inf
-    before = np.histogram(x, edges)[0] / len(x)
-    after = np.histogram(y, edges)[0] / len(y)
+    before, after = np.histogram(x, edges)[0], np.histogram(y, edges)[0]
     return _psi(before, after), float(stats.ks_2samp(x, y).pvalue)
 
 
@@ -235,7 +263,7 @@ def _category_shift(x: pd.Series, y: pd.Series) -> tuple[float, float, list[Any]
     if len(cats) > 1:
         with np.errstate(all="ignore"):
             p_value = float(stats.chi2_contingency(np.vstack([b.to_numpy(), a.to_numpy()]))[1])
-    return _psi(b.to_numpy() / b.sum(), a.to_numpy() / a.sum()), p_value, new, new_share
+    return _psi(b.to_numpy(), a.to_numpy()), p_value, new, new_share
 
 
 def _benjamini_hochberg(p: np.ndarray) -> np.ndarray:

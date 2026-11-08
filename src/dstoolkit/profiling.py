@@ -43,10 +43,13 @@ if TYPE_CHECKING:  # matplotlib loads only when a report draws a chart
 from .cleaning import (
     DATE_PATTERN,
     DOB_NAME_HINTS,
+    ID_DISTINCT_SHARE,
+    ID_MIN_DISTINCT,
     NUMERIC_DATE,
     _bounds,
     _calendar_days,
     _date_order,
+    _is_numeric_identifier,
     _is_yes_no,
     _normalized,
     _offset_kind,
@@ -112,6 +115,7 @@ class ColumnProfile:
     missing: int
     unique: int
     stats: dict[str, Any] = field(default_factory=dict)
+    identifier: bool = False  # whole numbers that label rows (patient_id): no fill, outlier or model advice
     top_values: list[tuple[str, int]] = field(default_factory=list)
     outliers: int | None = None
     chart: str | None = None  # base64 PNG
@@ -300,7 +304,8 @@ class Profile:
         stored = {c.name for c in self.columns if c.kind == "datetime" and c.dtype.startswith("datetime")}
         readable = [n for n, k in kinds.items() if k == "datetime" and (n in stored or n in cols("to_datetime"))]
         dates = [n for n, k in kinds.items() if k == "datetime" and n not in readable]   # mixed day/month order
-        identifiers = [n for n, k in kinds.items() if k == "text" and n not in cols("to_numeric")]
+        identifiers = [c.name for c in self.columns
+                       if (c.kind == "text" and c.name not in cols("to_numeric")) or c.identifier]
         converted = set(cols("to_numeric") + cols("to_boolean") + cols("standardize"))
         encoded = set(cols("encode"))
         unencoded = [n for n, k in kinds.items() if k == "categorical" and n not in encoded
@@ -1077,7 +1082,18 @@ def _profile_column(series: pd.Series, name: str, charts: bool, max_categories: 
     if numeric_text:
         suggest("type", "high", "Numbers stored as text; convert to a numeric type.", "to_numeric")
 
-    if kind == "numeric":
+    if kind == "numeric" and _is_numeric_identifier(series, name):
+        col.identifier = True
+        x = values.astype(float)
+        col.stats = {"min": x.min(), "max": x.max(), "distinct values": col.unique}
+        why = ("named like an identifier" if col.unique <= ID_MIN_DISTINCT or col.unique < ID_DISTINCT_SHARE * len(x)
+               else f"{col.unique:,} distinct values in {len(x):,} rows")
+        suggest("note", "low", f"Whole numbers that look like an identifier ({why}): averages, outliers and fills "
+                f"mean nothing for them. Leave it out of models; if a value can repeat (several rows per patient), "
+                f"pass it as group=.")
+        if charts:
+            col.chart = _histogram(x, col.unique <= DISCRETE_MAX_UNIQUE)
+    elif kind == "numeric":
         x = values.astype(float)
         raw_skew = x.skew() if len(x) > 2 else 0.0
         skew = float(raw_skew) if isinstance(raw_skew, (int, float, np.number)) else 0.0
@@ -1352,6 +1368,8 @@ def _fmt(value: Any) -> str:
 
 
 def _one_line(c: ColumnProfile) -> str:
+    if c.identifier:
+        return f"identifier, {_fmt(c.stats['min'])} to {_fmt(c.stats['max'])}"
     if c.kind == "numeric":
         return f"{_fmt(c.stats['min'])} to {_fmt(c.stats['max'])}, median {_fmt(c.stats['median'])}"
     if c.kind == "datetime":
