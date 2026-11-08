@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.17.0 (unreleased)
+Every user-facing change, newest first. Dates (UTC) are when the GitHub release (and, from 0.15.2, the PyPI upload) was published; versions without a date were never released on their own.
+
+**Versions and deprecations.** dstoolkit is before 1.0, so a minor version (0.17.0) may change behaviour, and each one says what changed under **Changed**; patch versions (0.16.1) only fix bugs or speed things up. A function that's going away first gives a `DeprecationWarning` for at least one minor version, with what to use instead, and is listed under **Deprecated**. The validation rule format stays experimental until 1.0.
+
+## 0.17.0
 
 Changes in behaviour, from the November architecture review. Upgrade notes are marked **Changed**.
 
@@ -10,8 +14,10 @@ Changes in behaviour, from the November architecture review. Upgrade notes are m
 - **Changed: PSI for brand-new or vanished values is set by the data.** `compare()` used to stand in 0.0001 for an empty bin, so a new category's PSI (9.48 for "ER" in the hospital demo) mostly reflected that constant. Half a row is now added to every bin (Jeffreys smoothing), so the number depends on how many rows there are: 8.49 for "ER", 6.60 for the HbA1c unit change. No status in the demo or the tests changed.
 - **New: `DateFeatures(..., interval_unit="calendar_days")`** counts intervals in whole calendar days, the same as `add_days_between()` (dates with a time zone on their local calendar). The default, `"days"`, still gives elapsed days with fractions: 23:00 to 01:00 the next day is 0.083, not 1. `add_days_between()`'s docstring said `DateFeatures(intervals=...)` "does the same", which it didn't.
 - `compare(columns=...)` accepts any column labels, not only text (the type hint said `str`).
+- **Deprecated: `drop_nulls()` and `add_passed()`.** They're one line of pandas (`data.dropna()`, `df.assign(Passed=df["Grade"] >= 60)`) left from the earliest coursework version, and now give a `DeprecationWarning` saying so. They'll be removed in 0.18.0 or later. `show_eda()` stays. The `Toolkit_on_Titanic_Data` notebook uses pandas instead.
+- **README:** a first screen that says what dstoolkit catches, with evidence from the demos, badges for the PyPI version, Python versions and license, a link to try the browser app, and a diagram of where it fits in a cloud pipeline. This CHANGELOG now has release dates and a short versioning and deprecation policy.
 
-## 0.16.1
+## 0.16.1 (2026-11-09)
 
 Fixes from the November architecture review: dates as they arrive in real exports, a faster `profile()`, and tidier packaging.
 
@@ -25,21 +31,21 @@ Fixes from the November architecture review: dates as they arrive in real export
 - **Adjusted p-values:** in `associations()` and `compare()`, one missing p-value no longer turns every adjusted p-value into a blank; it stays blank, and the others are adjusted for the tests that gave one.
 - **Packaging:** a clearer package description on PyPI. The two tests that read files only in the repository (`.github/`) skip themselves when run from the source distribution. Two tests that relied on `caplog` (which depends on the pytest version when messages print) now read the printed output.
 
-## 0.16.0
+## 0.16.0 (2026-11-07)
 
 - **New: `add_days_between(df, start, end, name)`** adds the whole calendar days from one date column to another, such as length of stay from admission and discharge dates. A time of day doesn't count, so a same-day discharge is 0. An end dated before its start is a data error, so it's left missing and counted in the summary; pass `allow_negative=True` when negative gaps are meaningful (days paid early, say). Text dates are read like `to_datetime_columns()`, never swapping day and month. It's the cleaning-stage partner of `add_age_column`; for a model, `DateFeatures(intervals=...)` does the same inside a pipeline.
 - Found by reviewing the last of the earlier drafts (issue #10). The other draft functions were already covered: yes/no to True/False (`to_boolean`), date columns (`to_datetime_columns`), column names (`clean_column_names`), age at admission (`add_age_column(as_of=...)`), notes rows at the end of an export (`profile()`), categories (`to_category`) and counts (`show_counts`).
 
-## 0.15.2
+## 0.15.2 (2026-11-07)
 
 - **Published on PyPI as `pandas-dstoolkit`:** `pip install pandas-dstoolkit`, still imported as `dstoolkit`. PyPI ignores hyphens and dots when comparing names, so `dstoolkit` counted as a copy of an unrelated `ds-toolkit`. A GitHub release now uploads that version automatically through PyPI's trusted publishing (OpenID Connect), so no upload token is stored anywhere. Running the workflow by hand uploads to TestPyPI first, to check a release before making it. The build checks that the release tag matches the version, that the wheel installs and imports on its own (without loading matplotlib), and points the README's links at the release, so the PyPI page shows its images. No code changes.
 
-## 0.15.1
+## 0.15.1 (2026-11-07)
 
 - **`import dstoolkit` no longer loads matplotlib.** The plotting functions and the charts in `profile()` reports import it the first time they draw, so nothing changes in a notebook. `compare()`, `profile(charts=False)`, `validate()` and the cleaning functions now run where matplotlib isn't installed, such as an AWS Lambda zip package, which has a 250 MB limit that pandas, NumPy, SciPy and matplotlib together exceed. Importing is also faster. matplotlib is still a required dependency; a test checks that it stays unloaded until something is drawn.
 - **Docs:** a Design decisions section in the README and [docs/design-decisions.md](docs/design-decisions.md), with the reasons, alternatives and costs behind the main choices. The README now links the live browser app.
 
-## 0.15.0
+## 0.15.0 (2026-11-07)
 
 Two problems from real hospital exports, found by reviewing the earlier 2023 drafts.
 
@@ -50,7 +56,7 @@ Two problems from real hospital exports, found by reviewing the earlier 2023 dra
   - The first suggestion drops them by row label, and both `code()` and `pipeline()` do that before anything else.
   - Row and missing-cell counts in the overview still describe the file as loaded.
 
-## 0.14.0
+## 0.14.0 (2026-11-03)
 
 - **New: `dst.compare(reference, current)`** checks whether new data still looks like the data a model was built on, one row per column, biggest changes first:
   - **type changes**, such as numbers arriving as text
@@ -62,7 +68,7 @@ Two problems from real hospital exports, found by reviewing the earlier 2023 dra
   A Kolmogorov-Smirnov or chi-square p-value, adjusted for testing many columns, is reported but doesn't set the status, because with thousands of rows tiny harmless shifts are "significant". Dates aren't compared, since they're expected to move forward. Identifiers (many values, mostly distinct) only get the type and blank checks. Nothing is changed in either DataFrame.
 - **`Hospital_Readmissions`, section 8:** the 2024 admissions against the 2023 ones (all stable), then a batch with a lab unit change, "ER" instead of "Emergency", a new diagnosis code and missing prior-admission counts. All four are flagged as major.
 
-## 0.13.1
+## 0.13.1 (2026-11-03)
 
 - **`pipeline()`'s model no longer overfits.** The generated script now uses gradient boosting with small, slowly learning trees (`learning_rate=0.03, max_iter=200, max_depth=3, min_samples_leaf=40`) instead of scikit-learn's defaults. With the defaults, the hospital demo's risks were overconfident: the riskiest tenth of admissions were predicted 63% and 48% were readmitted, and the safest tenth 1% against 5%. With the new settings each band is within about 2 points, the Brier score falls from 0.145 to 0.135, and ROC AUC rises from 0.71 to 0.75. On the Titanic, ROC AUC is 0.859 (was 0.856).
 - **`Hospital_Readmissions` checks whether the risks can be trusted:** out-of-fold risks by band against the actual readmission rate, the Brier score against always guessing the overall rate, what calling the riskiest 10% would catch (53% of them readmitted, 27% of all readmissions), and the default settings for comparison.
@@ -78,7 +84,7 @@ Dates, done safely: the remaining date limits of 0.12.0.
 - **Mixed day/month dates: clearer, still not guessed.** The suggestion now counts how many values can only be day-first, how many only month-first, and how many could be either, and suggests resolving them at the source (for example, by which site or system wrote each row). No rule can read the ambiguous ones safely, so dstoolkit still doesn't try.
 - The `Hospital_Readmissions` notebook compares grouped folds with a time split.
 
-## 0.12.0
+## 0.12.0 (2026-11-03)
 
 Preparing real-world data for a model: repeated patients, dates, rare codes, informative blanks and leaks you have to declare. Every feature appears in a new demo on made-up hospital data.
 
@@ -91,7 +97,7 @@ Preparing real-world data for a model: repeated patients, dates, rare codes, inf
 - **New: `profile(df, sample=20_000)`** profiles a fixed random subset of a large dataset, so reruns match. The overview's row, duplicate and missing counts and the validation still use every row, and the report says what was sampled. The README has timings: about 50 seconds for a million rows with 16 columns, or about 5 seconds with `sample=20_000`.
 - A test saves a fitted `pipeline()` model with `joblib`, loads it back and checks that the predictions match.
 
-## 0.11.1
+## 0.11.1 (2026-11-03)
 
 - **`report.pipeline()` scores a no-skill baseline** on the same folds (`DummyClassifier` or `DummyRegressor`), and prints it under the model's score. A score means little without it: on the Titanic, 79% accuracy sounds good until you know that always predicting "died" gets 62%.
 - **Clearer advice on swapping the model.** The script's comment said "swap in any scikit-learn model", but a model that can't handle blanks, such as logistic regression, would fail on the first blank. It now says to fill every column and add `dst.Scaler` first.
@@ -112,7 +118,7 @@ Preparing a dataset for a model: the report now knows what the model will predic
 - **Fixed: bad encoding advice.** For text columns with more than 10 categories, `profile()` suggested label codes. Numbering unordered categories invents an order that linear and distance-based models take literally. It now suggests one-hot encoding, grouping rare categories first, and says label codes suit tree-based models only. The `encode_categorical()` warning for many one-hot columns says the same.
 - The `Profile_Titanic` notebook has a "Prepare for a model" section, including a leak the statistics can't catch (`body`). The example report in `docs/` includes the Target section.
 
-## 0.10.0
+## 0.10.0 (2026-10-31)
 
 - **New: a "Related columns" section in `profile()`.** It lists the pairs of columns of any type that are related, from `associations()` with its defaults: Pearson or Spearman for two number columns, chi-square with Cramér's V for two category columns, and ANOVA with eta for one of each. Until now the report only showed Pearson correlations between number columns, so a relation between, say, sex and survival didn't appear.
   - The pairs are also available as `report.associations`.
@@ -123,7 +129,7 @@ Preparing a dataset for a model: the report now knows what the model will predic
 - The `Profile_Titanic` notebook reads the new section, including why `boat` looks only moderately related to survival when it's tested on the rows where both values are present.
 - **New notebook: `Modelling_Titanic`** (added after 0.9.0). Explores which columns are related to survival with `associations()`, which also flags a column recorded after the sinking that would leak the answer; checks the model's inputs with `validate()`; then cross-validates a scikit-learn pipeline of dstoolkit transformers (shuffled 5-fold) against a no-skill baseline: about 79% accuracy against 62%, and 98% if the leaked column is added. Documentation only; no code changes.
 
-## 0.9.0
+## 0.9.0 (2026-10-31)
 
 Three features rebuilt from earlier 2023 drafts, rewritten from scratch to fix their flaws and follow dstoolkit's safe-by-default rules.
 

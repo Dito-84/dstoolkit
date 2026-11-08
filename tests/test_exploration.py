@@ -28,12 +28,14 @@ def grades():
 
 # ---------- data helpers ----------
 
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
 def test_drop_nulls_removes_missing_rows(grades):
     cleaned = toolkit.drop_nulls(grades)
     assert cleaned.isna().sum() == 0
     assert len(cleaned) == 6
 
 
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
 def test_drop_nulls_returns_data_when_nothing_is_missing():
     # The original notebook version returned None in this case
     s = pd.Series([1, 2, 3])
@@ -42,11 +44,13 @@ def test_drop_nulls_returns_data_when_nothing_is_missing():
     pd.testing.assert_series_equal(cleaned, s)
 
 
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
 def test_drop_nulls_does_not_modify_input(grades):
     toolkit.drop_nulls(grades)
     assert grades.isna().sum() == 2
 
 
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
 def test_add_passed_uses_threshold():
     df = pd.DataFrame({"Grade": [59, 60, 85]})
     result = toolkit.add_passed(df)
@@ -54,6 +58,7 @@ def test_add_passed_uses_threshold():
     assert "Passed" not in df.columns  # original left unchanged
 
 
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
 def test_add_passed_custom_threshold_and_name():
     df = pd.DataFrame({"Score": [40, 50]})
     result = toolkit.add_passed(df, grade_col="Score", threshold=50, name="OK")
@@ -186,3 +191,19 @@ def test_every_chart_returns_its_figure_so_it_can_be_saved(name, grades, tmp_pat
     assert isinstance(fig, Figure)
     fig.savefig(tmp_path / f"{name}.png")
     assert (tmp_path / f"{name}.png").stat().st_size > 0
+
+
+def test_coursework_helpers_are_deprecated():
+    with pytest.warns(DeprecationWarning, match=r"drop_nulls\(\) is deprecated.*data.dropna\(\)"):
+        toolkit.drop_nulls(pd.Series([1, None]))
+    with pytest.warns(DeprecationWarning, match="add_passed"):
+        out = toolkit.add_passed(pd.DataFrame({"Grade": [59, 60]}))
+    assert out["Passed"].tolist() == [False, True]              # still works until it's removed
+
+
+def test_other_functions_raise_no_deprecation_warning(recwarn):
+    import warnings
+    warnings.simplefilter("always")
+    toolkit.show_eda(pd.Series([1.0, 2.0, None]))
+    toolkit.show_counts(pd.Series(["a", None, "a"]))
+    assert not [w for w in recwarn if issubclass(w.category, DeprecationWarning)]
