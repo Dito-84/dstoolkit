@@ -38,3 +38,21 @@ def test_ruleset_requires_exactly_the_checks_ci_runs():
     assert required == _ci_check_names() == {
         "test (3.10)", "test (3.13)", "test (3.14)", "test (minimum versions)", "browser-app"}
     assert rules["pull_request"]["allowed_merge_methods"] == ["squash"]
+
+
+def test_release_tags_are_protected():
+    # Publishing a release uploads to PyPI: v* tags can't be moved or deleted, and only admins create them
+    ruleset = json.loads((ROOT / ".github" / "rulesets" / "protect-release-tags.json").read_text(encoding="utf-8"))
+    assert ruleset["target"] == "tag" and ruleset["enforcement"] == "active"
+    assert ruleset["conditions"]["ref_name"]["include"] == ["refs/tags/v*"]
+    assert {r["type"] for r in ruleset["rules"]} == {"creation", "update", "deletion", "non_fast_forward"}
+    assert ruleset["bypass_actors"] == [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}]
+
+
+def test_publish_checks_the_release_before_uploading():
+    text = (ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
+    build = text.split("\n  build:\n", 1)[1].split("\n  testpypi:\n", 1)[0]
+    steps = ["merge-base --is-ancestor", "doesn't match __version__", "pytest -q", "python -m build"]
+    positions = [build.find(step) for step in steps]
+    assert -1 not in positions and positions == sorted(positions), positions   # every check before the build
+    assert "fetch-depth: 0" in build

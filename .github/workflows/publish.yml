@@ -4,6 +4,10 @@ name: Publish to PyPI
 # (Actions → Publish to PyPI → Run workflow) uploads the current main to TestPyPI instead,
 # to check a release before making it. No API token is stored: PyPI trusts this workflow
 # through OIDC ("trusted publishing"), and only from the matching environment.
+#
+# Before anything is uploaded, the build job checks that the release is a commit on main
+# (which only gets there through a pull request with passing CI), that its tag matches
+# __version__, and runs the tests again on exactly what will be published.
 
 on:
   release:
@@ -18,10 +22,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0          # full history, to check the release commit is on main
 
       - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
+
+      - name: Release commit is on main
+        run: |
+          git fetch --quiet origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_SHA isn't on main; release only commits that reached main through a pull request"
+            exit 1
+          fi
 
       - name: Release tag matches the package version
         if: github.event_name == 'release'
@@ -31,6 +45,11 @@ jobs:
             echo "::error::Release tag ${{ github.event.release.tag_name }} doesn't match __version__ $version"
             exit 1
           fi
+
+      - name: Run the tests on exactly what will be published
+        run: |
+          pip install -e ".[dev]"
+          MPLBACKEND=Agg pytest -q
 
       - name: Point the README's links at this release (PyPI can't follow relative links)
         run: python .github/scripts/pypi_readme.py "${{ github.event.release.tag_name || github.sha }}"
@@ -69,6 +88,7 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # release/v1; pinned by commit because it holds the upload credentials
         with:
           repository-url: https://test.pypi.org/legacy/
+          skip-existing: true   # a second manual run for the same version is a check, not an error
 
   pypi:
     if: github.event_name == 'release'
