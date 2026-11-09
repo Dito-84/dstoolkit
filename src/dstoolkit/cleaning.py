@@ -94,6 +94,15 @@ DateOrder = Literal["day_first", "month_first", "ambiguous", "conflict", "none"]
 
 DOB_NAME_HINTS = ("dob", "date_of_birth", "dateofbirth", "birth_date", "birthdate", "birthday")
 
+# Names of identifier columns stored as numbers: patient_id, MRN, "zip code", PatientID. Whole words only,
+# so "paid" or "valid" don't count.
+NUMERIC_ID_NAME = re.compile(r"(^|[_\s])(id|code|zip|zipcode|postal|phone|ccn|npi|mrn|ssn|account)($|[_\s])",
+                             re.IGNORECASE)
+NUMERIC_ID_CAMEL = re.compile(r"[a-z0-9](Id|ID)$")
+ID_MIN_DISTINCT = 50          # a column of whole numbers this distinct...
+ID_DISTINCT_SHARE = 0.95      # ...in at least this share of its values...
+ID_DENSE_RANGE = 2            # ...and spanning at most twice as many numbers as it has values is a numbering
+
 
 def _check_columns(df: pd.DataFrame, columns: Iterable[str]) -> None:
     columns = list(columns)
@@ -123,6 +132,29 @@ def _position(df: pd.DataFrame, column: str) -> int:
     if not isinstance(loc, int):
         raise ValueError(f"Column name {column!r} appears more than once; rename duplicates first")
     return loc
+
+
+def _is_numeric_identifier(series: pd.Series, name: Any = None) -> bool:
+    """Whole numbers that label rows rather than measure something: patient or encounter IDs,
+    record numbers, ZIP codes stored as numbers. Named like an identifier, or (with more than 50
+    values) almost every value distinct and packed into a narrow range, as a numbering is. Their
+    averages, outliers and shifts mean nothing."""
+    if not pd.api.types.is_numeric_dtype(series) or pd.api.types.is_bool_dtype(series):
+        return False
+    values = series.dropna()
+    if values.empty:
+        return False
+    as_float = values.astype(float)
+    if not bool(np.isfinite(as_float).all() and (as_float % 1 == 0).all()):
+        return False
+    label = str(series.name if name is None else name)
+    if label.lower() == "id" or NUMERIC_ID_NAME.search(label) or NUMERIC_ID_CAMEL.search(label):
+        return True
+    # Unnamed: almost every value distinct AND packed into a narrow range, as numbering is (1001, 1002, ...).
+    # Measurements in whole units (costs in dollars) are often distinct too, but spread over a wide range.
+    distinct = values.nunique()
+    dense = float(as_float.max() - as_float.min()) + 1 <= ID_DENSE_RANGE * distinct
+    return bool(distinct > ID_MIN_DISTINCT and distinct >= ID_DISTINCT_SHARE * len(values) and dense)
 
 
 # ---------- types ----------
@@ -828,8 +860,9 @@ def encode_categorical(df: pd.DataFrame, columns: Mapping[str, Encoding] | Seque
 
     columns: {column: 'onehot' or 'label'}, or a list of columns to one-hot encode
       - 'onehot' adds one 0/1 column per category (e.g. sex_female, sex_male)
-      - 'label' adds a column of integer codes (column_label), in alphabetical
-        order of the categories; missing values stay missing
+      - 'label' adds a column of integer codes (column_label), in numeric order
+        when the categories are all numbers (1, 2, 10), otherwise alphabetical;
+        missing values stay missing
     onehot_limit: warn when one-hot encoding would add more columns than this
     drop_original: remove the original text columns after encoding
     """
@@ -852,7 +885,7 @@ def encode_categorical(df: pd.DataFrame, columns: Mapping[str, Encoding] | Seque
             for offset, name in enumerate(dummies.columns):
                 result.insert(at + offset, name, dummies[name])
         else:
-            categories = sorted(df[col].dropna().unique(), key=str)
+            categories = _category_order(df[col].dropna().unique())
             codes = {cat: i for i, cat in enumerate(categories)}
             result.insert(_position(result, col) + 1, f"{col}_label", df[col].map(codes).astype("Int64"))
             _say(verbose, f"{col} labels: " + ", ".join(f"{k}={v}" for k, v in codes.items()))
@@ -860,6 +893,16 @@ def encode_categorical(df: pd.DataFrame, columns: Mapping[str, Encoding] | Seque
         result = result.drop(columns=list(columns))
     _say(verbose, "Encoded " + ", ".join(f"{c} ({m})" for c, m in columns.items()) + ".")
     return result
+
+
+def _category_order(categories: Iterable[Any]) -> list[Any]:
+    """Numeric order when every category is a number (grades 1, 2, 10), otherwise alphabetical:
+    sorting numbers as text would put 10 before 2."""
+    values = list(categories)
+    if values and all(isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, (bool, np.bool_))
+                      for v in values):
+        return sorted(values, key=float)
+    return sorted(values, key=str)
 
 
 # ---------- normalization ----------
@@ -965,8 +1008,9 @@ def add_days_between(df: pd.DataFrame, start: str, end: str, name: str | None = 
     read the same way as to_datetime_columns(): day and month are never swapped,
     and a column mixing both orders raises an error.
     Blank or unreadable dates give a missing result; the summary says how many
-    couldn't be read. For a model, use DateFeatures(intervals=...) instead, which
-    does the same inside a scikit-learn Pipeline.
+    couldn't be read. For a model, use DateFeatures(intervals=...,
+    interval_unit="calendar_days"), which counts the same way inside a
+    scikit-learn Pipeline (its default, "days", keeps fractions of a day).
     """
     _check_columns(df, [start, end])
     if start == end:

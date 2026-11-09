@@ -178,8 +178,8 @@ A model only works on data like the data it learned from. `compare()` checks eve
 changes = dst.compare(train, new_batch)
 changes[changes["status"] != "stable"]
 # Compared 13 column(s): 4 major; 9 stable.
-#   admission_type  major  distribution shifted (PSI 9.48); 1 new value(s), 53.2% of new rows: ER
-#   hba1c           major  distribution shifted (PSI 7.96)
+#   admission_type  major  distribution shifted (PSI 8.49); 1 new value(s), 53.2% of new rows: ER
+#   hba1c           major  distribution shifted (PSI 6.60)
 #   diagnosis_code  major  7 new value(s), 8.9% of new rows: U07, ...
 #   prior_admissions_12m  major  blanks 0.0% → 15.0%
 ```
@@ -187,12 +187,12 @@ changes[changes["status"] != "stable"]
 | Check | What it catches | Status |
 |---|---|---|
 | Type | Numbers arriving as text, text arriving as numbers | major |
-| Shift | Population stability index (PSI): over the reference's deciles for numbers, over the categories for the rest (rare categories under 1% share one bin, so a long tail isn't noise) | moderate from 0.1, major from 0.25 (the usual rule of thumb) |
+| Shift | Population stability index (PSI): over the reference's deciles for numbers, over the categories for the rest (rare categories under 1% share one bin, so a long tail isn't noise). Half a row is added to each bin, so a brand-new value gives a PSI set by the data rather than by a stand-in for zero | moderate from 0.1, major from 0.25 (the usual rule of thumb) |
 | Blanks | A change in the share of missing values | moderate from 2 points, major from 10 |
 | New values | Categories the reference never had (a new code, a relabelled category) | moderate from 2% of new rows, major from 5% |
 | Columns | Added or removed | added / removed |
 
-A p-value (Kolmogorov-Smirnov or chi-square, adjusted for testing many columns) is reported but doesn't set the status: with thousands of rows, tiny harmless shifts are "significant". Dates are expected to move forward, so their distribution isn't compared, and identifiers (many values, mostly distinct) only get the type and blank checks. Nothing is changed. The [`Hospital_Readmissions`](notebooks/Hospital_Readmissions.ipynb) notebook shows it catching a lab unit change, a relabelled admission type, a new diagnosis code and missing counts.
+A p-value (Kolmogorov-Smirnov or chi-square, adjusted for testing many columns) is reported but doesn't set the status: with thousands of rows, tiny harmless shifts are "significant". Dates are expected to move forward, so their distribution isn't compared, and identifiers only get the type and blank checks: text with many values, mostly distinct, and whole numbers named like an ID (`patient_id`, `mrn`) or numbered in a narrow range. A new batch of IDs always looks shifted, so `identifiers=[...]` lets you choose them yourself. Nothing is changed. The [`Hospital_Readmissions`](notebooks/Hospital_Readmissions.ipynb) notebook shows it catching a lab unit change, a relabelled admission type, a new diagnosis code and missing counts.
 
 ## Transformers for machine learning: `dstoolkit.transformers`
 
@@ -220,7 +220,7 @@ cross_val_score(model, X, y, cv=folds)   # cleaning is refitted on each training
 | `OutlierCapper(columns, method, threshold)` | IQR or z-score bounds (`bounds_`) | Caps values at the bounds; rows are kept |
 | `CategoryEncoder(columns, handle_unknown, drop_original, min_frequency, other_label)` | The categories in each column (`categories_`), and with `min_frequency` the rare ones (`rare_`) | One-hot or label codes for those categories. Unseen categories are ignored (zeros, or a missing label) or raise an error. With `min_frequency` (rows, or a share such as 0.01), rare categories, and unseen ones, are grouped into "Other": useful for diagnosis codes, providers or ZIP codes with hundreds of mostly rare values |
 | `Scaler(columns)` | Min and range, or mean and standard deviation (`stats_`) | Min-max or z-score scaling with the training numbers |
-| `DateFeatures(columns, parts, intervals, drop_original, ages)` | Nothing (which columns are dates: `date_columns_`) | Splits date columns into numbers a model can use (`<column>_year`, `_month`, `_dayofweek`, and `day`, `dayofyear`, `quarter` or `hour` if asked). `intervals={"stay_days": ("admitted", "discharged")}` adds the days between two dates, and `ages={"age_at_admission": ("date_of_birth", "admitted")}` the age in completed years (missing, not negative, if the birth date is later). Drops the date columns by default, since most models can't take dates |
+| `DateFeatures(columns, parts, intervals, drop_original, ages, interval_unit)` | Nothing (which columns are dates: `date_columns_`) | Splits date columns into numbers a model can use (`<column>_year`, `_month`, `_dayofweek`, and `day`, `dayofyear`, `quarter` or `hour` if asked). `intervals={"stay_days": ("admitted", "discharged")}` adds the days between two dates (with fractions of a day; `interval_unit="calendar_days"` counts whole calendar days, like `add_days_between()`), and `ages={"age_at_admission": ("date_of_birth", "admitted")}` the age in completed years (missing, not negative, if the birth date is later). Drops the date columns by default, since most models can't take dates |
 
 On the data they were fitted on, they give the same results as `fill_missing`, `handle_outliers(action="cap")`, `encode_categorical` and `normalize`. They take and return DataFrames (they need column names; inside a `ColumnTransformer`, call `.set_output(transform="pandas")`), support `get_feature_names_out()`, and can be cloned and pickled like any scikit-learn transformer.
 
@@ -244,7 +244,7 @@ On the data they were fitted on, they give the same results as `fill_missing`, `
 | `handle_outliers(df, columns, method, action)` | Removes outlier rows (the rest keep their labels), or caps values at the bounds and keeps the rows |
 | `winsorize(df, columns, lower, upper)` | Clips columns to percentiles (default 5th–95th) |
 | `log_transform(df, columns, suffix)` | log(1 + x) for long right-tailed columns like income or price |
-| `encode_categorical(df, columns)` | One-hot or label encoding per column; label codes keep missing values missing |
+| `encode_categorical(df, columns)` | One-hot or label encoding per column; label codes follow numeric order for numbers (1, 2, 10) and alphabetical order otherwise, and keep missing values missing |
 | `normalize(df, columns)` | Min-max (0–1) or z-score scaling per column |
 | `add_age_column(df, dob_column, as_of)` | Age in completed years from a birth-date column, as of today or another date column. Unreadable or future birth dates give a missing age, and are counted in the summary |
 | `add_days_between(df, start, end, name)` | Whole calendar days from one date column to another, such as length of stay; dates with a time zone are counted on their local calendar, so daylight saving never adds or loses a day. An end before its start (a discharge dated before its admission) is left missing and counted, unless `allow_negative=True` |

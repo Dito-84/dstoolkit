@@ -124,7 +124,8 @@ def test_generated_code_runs(messy):
 
 
 def test_clean_data_gets_few_suggestions():
-    df = pd.DataFrame({"x": np.arange(100.0), "group": ["a", "b"] * 50})
+    # a measurement (a 0-1000 scale); np.arange would be a row numbering, which is noted as an identifier
+    df = pd.DataFrame({"x": np.linspace(0, 1000, 100), "group": ["a", "b"] * 50})
     r = dst.profile(df, charts=False)
     assert [s.action for s in r.suggestions] == ["encode"]
 
