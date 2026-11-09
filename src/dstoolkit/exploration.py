@@ -53,18 +53,27 @@ CorrelationMethod = Literal["auto", "pearson", "spearman"]
 PandasData = TypeVar("PandasData", pd.Series, pd.DataFrame)
 
 
-def drop_nulls(data: PandasData) -> PandasData:
-    """Return a copy of a Series or DataFrame with null rows removed.
+def _deprecated(name: str, instead: str) -> None:
+    warnings.warn(f"dst.{name}() is deprecated and will be removed in dstoolkit 0.18.0 or later; use {instead}",
+                  DeprecationWarning, stacklevel=3)
 
-    Always returns data (the unchanged copy when there are no nulls), so the
-    result can be used safely in the next step.
+
+def drop_nulls(data: PandasData) -> PandasData:
+    """Deprecated since 0.17.0: use data.dropna(), which does the same.
+
+    Return a copy of a Series or DataFrame with null rows removed.
     """
+    _deprecated("drop_nulls", "data.dropna()")
     return data.dropna(axis=0)
 
 
 def add_passed(df: pd.DataFrame, grade_col: str = "Grade", threshold: float = 60,
                name: str = "Passed") -> pd.DataFrame:
-    """Return a copy of df with a True/False column for values >= threshold."""
+    """Deprecated since 0.17.0: use df.assign(Passed=df["Grade"] >= 60), which does the same.
+
+    Return a copy of df with a True/False column for values >= threshold.
+    """
+    _deprecated("add_passed", f"df.assign({name}=df[{grade_col!r}] >= {threshold})")
     out = df.copy()
     out[name] = out[grade_col] >= threshold
     return out
@@ -72,7 +81,7 @@ def add_passed(df: pd.DataFrame, grade_col: str = "Grade", threshold: float = 60
 
 def show_eda(var_data: pd.Series) -> None:
     """Print min, max, mean, median and mode for a numeric Series."""
-    data = drop_nulls(var_data)
+    data = var_data.dropna()
     if data.nunique() == len(data):
         modes = "none (every value appears once)"
     else:
@@ -88,7 +97,7 @@ def show_eda(var_data: pd.Series) -> None:
 
 def show_eda_table(var_data: pd.Series, decimals: int = 2) -> Figure:
     """Draw the .describe() statistics for a Series as a table figure."""
-    data = drop_nulls(var_data)
+    data = var_data.dropna()
     import matplotlib.pyplot as plt
     fig, ax = plt.subplots()
     ax.axis("off")
@@ -115,7 +124,7 @@ def _trim_density(ax: Axes, data: pd.Series) -> None:
 
 def show_histogram(var_data: pd.Series, title: str = "Data Distribution") -> Figure:
     """Histogram with mean, median and mode lines."""
-    data = drop_nulls(var_data)
+    data = var_data.dropna()
     import matplotlib.pyplot as plt
     fig, ax = plt.subplots(figsize=(10, 4))
     ax.hist(data)
@@ -129,7 +138,7 @@ def show_histogram(var_data: pd.Series, title: str = "Data Distribution") -> Fig
 
 def show_distribution(var_data: pd.Series, title: str = "Data Distribution") -> Figure:
     """Histogram (with center lines) stacked above a horizontal boxplot."""
-    data = drop_nulls(var_data)
+    data = var_data.dropna()
     import matplotlib.pyplot as plt
     fig, ax = plt.subplots(2, 1, figsize=(12.8, 7.2), sharex=True)
     ax[0].hist(data)
@@ -144,7 +153,7 @@ def show_distribution(var_data: pd.Series, title: str = "Data Distribution") -> 
 
 def show_density(var_data: pd.Series, title: str = "Data Density") -> Figure:
     """Kernel density curve with mean and median lines."""
-    data = drop_nulls(var_data)
+    data = var_data.dropna()
     import matplotlib.pyplot as plt
     fig, ax = plt.subplots(figsize=(10, 4))
     data.plot.density(ax=ax)
@@ -157,7 +166,7 @@ def show_density(var_data: pd.Series, title: str = "Data Density") -> Figure:
 
 def show_distribution_profile(var_data: pd.Series, title: str = "Data Distribution") -> Figure:
     """2x2 overview: histogram, density curve, boxplot and summary table."""
-    data = drop_nulls(var_data)
+    data = var_data.dropna()
     import matplotlib.pyplot as plt
     fig, ax = plt.subplots(2, 2, figsize=(12.8, 7.2))
 
@@ -213,7 +222,7 @@ def show_counts(var_data: pd.Series, top: int = 15, include_missing: bool = True
     if top < 1:
         raise ValueError("top must be at least 1")
     counts = var_data.astype("object").where(var_data.notna(), "(missing)") if include_missing \
-        else drop_nulls(var_data).astype("object")
+        else var_data.dropna().astype("object")
     counts = counts.value_counts()
     missing = counts.pop("(missing)") if "(missing)" in counts.index else None
     if len(counts) > top:

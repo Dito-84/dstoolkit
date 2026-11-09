@@ -62,7 +62,7 @@ from .validation import ColumnRule, Comparison, RuleResult, ValidationError, Val
 if TYPE_CHECKING:   # type checkers see the real classes; at run time they're imported on first use (below)
     from .transformers import CategoryEncoder, DateFeatures, MissingFiller, OutlierCapper, Scaler
 
-__version__ = "0.16.1"
+__version__ = "0.17.0"
 
 # The transformers need scikit-learn (an optional extra), so they're imported on
 # first use: `dst.Scaler` works when scikit-learn is installed, and `import

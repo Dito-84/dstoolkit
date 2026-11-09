@@ -1,8 +1,35 @@
 # dstoolkit
 
 [![CI](https://github.com/Dito-84/dstoolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/Dito-84/dstoolkit/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/pandas-dstoolkit)](https://pypi.org/project/pandas-dstoolkit/)
+[![Python](https://img.shields.io/pypi/pyversions/pandas-dstoolkit)](https://pypi.org/project/pandas-dstoolkit/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-**Data Science Toolkit**: a small, typed Python package for the first stages of a data project. It **profiles** a pandas DataFrame and suggests how to clean it, **cleans** it (duplicates, missing values, outliers, encoding, scaling), **validates** it against rules you write, **explores** it (summary statistics, distribution plots, line fits), and **prepares it for models** with scikit-learn transformers that learn on training data only. Every cleaning function returns a new DataFrame, so your raw data is never changed, and every function copes with missing values on its own. There's also a [drag-and-drop browser version](#browser-app) that needs no install.
+**Take a messy pandas dataset to model-ready, safely.** dstoolkit profiles a DataFrame and writes the cleaning code for you, validates it against your rules, flags target leaks and repeat patients before you train, and checks each new batch for drift. When a guess could damage data (swapping day and month, filling an ID with its mean), it doesn't guess. It's a small, typed package: every function returns a new DataFrame, and the scikit-learn transformers learn on training rows only.
+
+**[Try it in your browser](https://dito-84.github.io/dstoolkit/)** (your file never leaves the page) · [Example report](docs/titanic_profile.html) · [Hospital readmission demo](notebooks/Hospital_Readmissions.ipynb) · [Design decisions](docs/design-decisions.md)
+
+### What it catches, on the demo data
+
+| Problem | What dstoolkit does | Evidence |
+|---|---|---|
+| A column that gives the answer away (Titanic lifeboat; a readmission cost recorded only after readmission) | Flags it as a possible leak; the generated pipeline leaves it out | Titanic accuracy 0.785 → 0.976 with the leak; readmission ROC AUC 0.75 → 1.000 |
+| The same patient in training and test folds | Warns, and `group=` splits the folds by patient | [`Hospital_Readmissions`](notebooks/Hospital_Readmissions.ipynb), 4,090 made-up admissions for 1,500 made-up patients |
+| A model whose risks are overconfident | The starter model uses gentle boosting settings, checked for calibration | riskiest tenth predicted 63% against 48% actual with scikit-learn's defaults; Brier score 0.145 → 0.135 |
+| A new batch with a lab unit change, a relabelled category, a new code and 15% blanks | `compare()` rates all four "major" | same notebook, section 8 |
+
+Tested on Python 3.10, 3.13 and 3.14, with pandas 2.3 and 3.x, and on the oldest versions it supports (pandas 2.0, NumPy 1.24, SciPy 1.10, scikit-learn 1.3).
+
+### Where it fits in a cloud pipeline
+
+```mermaid
+flowchart LR
+    A[New export lands in S3] --> B["Lambda: dst.validate() and dst.compare()<br/>against a versioned reference"]
+    B -- all checks pass --> C[Dashboard or model scoring]
+    B -- failed rule or major drift --> D["SNS alert<br/>(counts only, no data values)"]
+```
+
+`validate()`, `compare()`, the cleaning functions and `profile(charts=False)` never import matplotlib, so they fit in a Lambda zip package (pandas, NumPy and SciPy are about 182 MB of its 250 MB).
 
 ## Install
 
@@ -373,7 +400,7 @@ Changes go through a pull request and squash-merge. The branch rules for `main` 
 - **[Hip & Knee Replacement Outcomes Dashboard](https://github.com/Dito-84/hip-knee-replacement-outcomes-dashboard)** (built on synthetic data): `scripts/check_data.py` profiles a discharge export on the analyst's own computer before a dashboard is built from it, using `missing_ok` because a blank complication or readmission means "didn't happen"
 - **[Titanic Survival Prediction](https://github.com/Dito-84/titanic-survival-prediction)**: a data-quality check before modeling. Its suggestions inform the choices, but missing ages are still filled inside each cross-validation fold so no test data leaks into training
 
-Both use dstoolkit as an optional extra, pinned to a tested commit, so changes here can't break them.
+Both pin a tested version of dstoolkit, so changes here can't break them until they choose to upgrade.
 
 ## Data
 
