@@ -60,6 +60,7 @@ A few choices shape everything else:
 - **Report leaks, don't hide them.** `profile(target=...)` flags columns that give the answer away, and the generated script leaves them out with a comment. On the Titanic data, the lifeboat column alone lifts accuracy from 0.785 to 0.976.
 - **Validate honestly.** Repeated patients get grouped folds, time-ordered data gets a past-to-future split, and every score is shown next to a no-skill baseline.
 - **Judge drift by size, not significance.** `compare()` rates change by the population stability index, so thousands of rows don't make a trivial shift look alarming.
+- **Releases you can pin.** Each version is uploaded to PyPI by CI through trusted publishing, only from a tested commit on `main`, so a version and its SHA-256 hash always mean the same files.
 
 The reasons, alternatives and costs for these and more are in [docs/design-decisions.md](docs/design-decisions.md).
 
