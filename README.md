@@ -395,6 +395,8 @@ The tests check every function, including that inputs are never modified, that e
 
 Changes go through a pull request and squash-merge. The branch rules for `main` are kept in [`.github/rulesets/protect-main.json`](.github/rulesets/protect-main.json): a pull request is required, all five CI checks must pass on an up-to-date branch, merges are squash-only, and `main` can't be force-pushed or deleted. A test keeps the required checks in step with the CI jobs.
 
+Releases: publishing a GitHub release `vX.Y.Z` on `main` uploads that version to PyPI through trusted publishing. Before uploading, the publish workflow checks that the release commit is on `main`, that the tag matches `__version__`, and runs the tests again on exactly what it will publish. Tags `v*` are protected by [`.github/rulesets/protect-release-tags.json`](.github/rulesets/protect-release-tags.json): they can't be moved or deleted, and only an admin can create one. The `pypi` environment asks for an approval before the upload.
+
 ## Used in
 
 - **[Hip & Knee Replacement Outcomes Dashboard](https://github.com/Dito-84/hip-knee-replacement-outcomes-dashboard)** (built on synthetic data): `scripts/check_data.py` profiles a discharge export on the analyst's own computer before a dashboard is built from it, using `missing_ok` because a blank complication or readmission means "didn't happen"
