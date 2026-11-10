@@ -4,6 +4,10 @@ Every user-facing change, newest first. Dates (UTC) are when the GitHub release 
 
 **Versions and deprecations.** dstoolkit is before 1.0, so a minor version (0.17.0) may change behaviour, and each one says what changed under **Changed**; patch versions (0.16.1) only fix bugs or speed things up. A function that's going away first gives a `DeprecationWarning` for at least one minor version, with what to use instead, and is listed under **Deprecated**. The validation rule format stays experimental until 1.0.
 
+## Unreleased
+
+- **Docs:** [docs/design-decisions.md](docs/design-decisions.md) covers 0.16 and 0.17: time zones and daylight saving (new entry 4), row labels that repeat, whole-number identifiers and PSI smoothing in the drift entry, matplotlib staying out of the import, the deprecation policy, and how releases reach PyPI (new entry 16). The README's summary adds a line on releases.
+
 ## 0.17.0
 
 Changes in behaviour, from the November architecture review. Upgrade notes are marked **Changed**.
