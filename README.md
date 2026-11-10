@@ -395,7 +395,7 @@ The tests check every function, including that inputs are never modified, that e
 
 Changes go through a pull request and squash-merge. The branch rules for `main` are kept in [`.github/rulesets/protect-main.json`](.github/rulesets/protect-main.json): a pull request is required, all five CI checks must pass on an up-to-date branch, merges are squash-only, and `main` can't be force-pushed or deleted. A test keeps the required checks in step with the CI jobs.
 
-Releases: publishing a GitHub release `vX.Y.Z` on `main` uploads that version to PyPI through trusted publishing. Before uploading, the publish workflow checks that the release commit is on `main`, that the tag matches `__version__`, and runs the tests again on exactly what it will publish. Tags `v*` are protected by [`.github/rulesets/protect-release-tags.json`](.github/rulesets/protect-release-tags.json): they can't be moved or deleted, and only an admin can create one. The `pypi` environment asks for an approval before the upload.
+Releases: publishing a GitHub release `vX.Y.Z` on `main` uploads that version to PyPI through trusted publishing. Before uploading, the publish workflow checks that the release commit is on `main`, that the tag matches `__version__`, and runs the tests again on exactly what it will publish. Tags `v*` are protected by [`.github/rulesets/protect-release-tags.json`](.github/rulesets/protect-release-tags.json): only a repository admin can create, move or delete one (admins bypass the ruleset), so workflows and other collaborators can't. PyPI never lets a published file be replaced, so a moved tag can't change what `pip install pandas-dstoolkit` installs. The `pypi` environment asks for an approval before the upload.
 
 ## Used in
 

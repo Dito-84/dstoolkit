@@ -41,7 +41,7 @@ def test_ruleset_requires_exactly_the_checks_ci_runs():
 
 
 def test_release_tags_are_protected():
-    # Publishing a release uploads to PyPI: v* tags can't be moved or deleted, and only admins create them
+    # Publishing a release uploads to PyPI: only admins (who bypass the ruleset) can create, move or delete v* tags
     ruleset = json.loads((ROOT / ".github" / "rulesets" / "protect-release-tags.json").read_text(encoding="utf-8"))
     assert ruleset["target"] == "tag" and ruleset["enforcement"] == "active"
     assert ruleset["conditions"]["ref_name"]["include"] == ["refs/tags/v*"]
